@@ -1,9 +1,12 @@
 from sqlalchemy import Column, Integer, String
 from .database import Base
 
-class ExampleTable(Base):
-    __tablename__ = "example_table"
+class User(Base):
+    __tablename__ = "tblusers"
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    value = Column(Integer)
+    usrid = Column(Integer, primary_key=True, index=True)
+    usrnamefirst = Column(String, index=True)
+    usrnamelast = Column(String, index=True)
+    usrnamedisplay = Column(String)
+    password = Column(String)  # Renamed from 'pass'
+    usremail = Column(String, unique=True, index=True)
