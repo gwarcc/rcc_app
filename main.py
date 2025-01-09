@@ -1,7 +1,11 @@
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
-from . import models, schemas, crud
+from rcc_app import models, schemas, crud
 from .database import engine, Base, get_db
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 Base.metadata.create_all(bind=engine)
 
