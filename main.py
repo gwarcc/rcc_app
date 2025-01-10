@@ -28,3 +28,10 @@ def login(login_data: schemas.Login, db: Session = Depends(get_db)):
     if not user or user.__getattribute__("password") != login_data.password:  # Use __getattribute__ for 'pass'
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return {"message": "Login successful", "user": {"id": user.usrid, "name": user.usrnamedisplay}}
+
+@app.get("/user/{user_id}")
+def get_user_info(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.usrid == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"id": user.usrid, "name": user.usrnamedisplay}
