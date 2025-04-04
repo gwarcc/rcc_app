@@ -11,6 +11,7 @@ import os
 
 from openpyxl import load_workbook
 from typing import List
+from collections import defaultdict
 
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -199,5 +200,61 @@ async def read_excel():
 
     return rows
     
+
+@app.get("/summary_stoppages")
+def get_summary_stoppages(
+    startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    cursor = db.cursor()
+
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    # Query Access database
+    cursor.execute(
+    """
+    SELECT 
+        f.facABBR AS windfarm, 
+        r.rtnName AS category
+    FROM 
+        ((tblEvent AS e
+        INNER JOIN tblFacility AS f ON e.facID = f.facID)
+        INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+    WHERE 
+        e.dtTS1DownBegin BETWEEN ? AND ?
+    """,
+    (start_dt, end_dt)
+)
+
+
+    rows = cursor.fetchall()
+    summary = defaultdict(lambda: defaultdict(int))
+
+
+    for row in rows:
+        wf = row.windfarm
+        cat = row.category.strip().lower() if row.category else ""
+
+        summary[wf]["Total Stops"] += 1
+
+        if cat == "schedule service":
+            summary[wf]["Scheduled Services"] += 1
+        elif cat in ["fault", "idf fault"]:
+            summary[wf]["Faults"] += 1
+        else:
+            summary[wf]["Non Scheduled Services"] += 1
+        
+    result = []
+    for wf, types in summary.items():
+        for typ, count in types.items():
+            result.append({"windfarm": wf, "type": typ, "count": count})
+
+    return result
+
 
 
