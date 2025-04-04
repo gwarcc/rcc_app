@@ -127,6 +127,53 @@ def get_offline_wtgs(db: pyodbc.Connection = Depends(get_db_access)):
 
     return {"offlineWtgsDataSet": data}
 
+# reading service events from microsoft access DB
+@app.get("/get_services")
+async def get_services(
+    startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)):
+    cursor = db.cursor()
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+    cursor.execute(
+        """
+        SELECT 
+            e.dtTS1DownBegin, 
+            f.facABBR, 
+            a.astName, 
+            r.rtnName, 
+            rr.rsnName, 
+            n.evntntNote
+        FROM 
+            ((((tblEvent AS e
+            INNER JOIN tblFacility AS f ON e.facID = f.facID)
+            INNER JOIN tblAsset AS a ON e.astID = a.astID)
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+            INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
+            LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
+        WHERE 
+            e.dtTS1DownBegin BETWEEN ? AND ?
+            AND r.rtnName NOT IN ('Fault', 'IDF Outage', 'Other', 'IDF Fault')
+            AND rr.rsnName <> 'Communication loss'
+        """,
+        (start_dt, end_dt)
+        )  # Modify with your actual query
+    rows = cursor.fetchall()
+
+    # Extract the column names dynamically from the cursor description
+    columns = [column[0] for column in cursor.description]
+    
+    # Create a list of dictionaries with column names as keys
+    data = [dict(zip(columns, row)) for row in rows]
+
+    return {"servicesDataSet": data}
+
 
 # reading fault events from microsoft access DB
 @app.get("/get_faults")
@@ -156,7 +203,7 @@ async def get_faults(
             INNER JOIN tblAsset AS a ON e.astID = a.astID)
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
             INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
-            INNER JOIN tblEventNotes as n ON e.evntID = n.evntID)
+            LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID)
             INNER JOIN tblFaultCode as fa ON e.fltID = fa.fltID
         WHERE 
             e.fltID IS NOT NULL AND
