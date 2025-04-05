@@ -305,3 +305,58 @@ def get_summary_stoppages(
 
 
 
+@app.get("/stoppage_legend")
+def get_stoppage_legend(
+    startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    cursor = db.cursor()
+
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    cursor.execute(
+        """
+        SELECT 
+            r.rtnName AS category,
+            rr.rsnName AS rsnName
+        FROM 
+            ((tblEvent AS e
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+            INNER JOIN tblReason AS rr ON e.rsnID = rr.rsnID)
+        WHERE 
+            e.dtTS1DownBegin BETWEEN ? AND ?
+        """,
+        (start_dt, end_dt)
+    )
+
+    rows = cursor.fetchall()
+    legend_summary = defaultdict(lambda: defaultdict(int))
+
+    for row in rows:
+        cat = row.category.strip().lower() if row.category else ""
+        rsn = row.rsnName.strip() if row.rsnName else "Unknown"
+
+        if cat == "schedule service":
+            typ = "Scheduled Services"
+        elif cat in ["fault", "idf fault"]:
+            typ = "Faults"
+        else:
+            typ = "Non Scheduled Services"
+
+        legend_summary[typ][rsn] += 1
+
+    result = []
+    for typ, reasons in legend_summary.items():
+        for rsn, count in reasons.items():
+            result.append({
+                "type": typ,
+                "rsnName": rsn,
+                "count": count
+            })
+
+    return result
