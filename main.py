@@ -196,7 +196,10 @@ async def get_faults(
             a.astName, 
             r.rtnName, 
             fa.fltCode,
-            fa.fltDesc
+            fa.fltDesc,
+            e.dtTS1DownBegin,
+            e.dtTS7DownFinish,
+            ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs
         FROM 
             (((((tblEvent AS e
             INNER JOIN tblFacility AS f ON e.facID = f.facID)
