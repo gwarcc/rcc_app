@@ -363,3 +363,102 @@ def get_stoppage_legend(
             })
 
     return result
+
+
+@app.get("/stoppage_headings")
+def get_stoppage_legend(
+    startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    cursor = db.cursor()
+
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    cursor.execute(
+        """
+        SELECT 
+            COUNT(IIf(r.rtnName NOT LIKE '*Communication*' 
+                AND r.rtnName NOT LIKE '*IDF Fault*' 
+                AND r.rtnName NOT LIKE '*IDF Outage*', 1, NULL)) AS total_stoppages,
+            COUNT(IIf(r.rtnName IN ('Schedule Service', 'Scheduled - Adhoc', 'Scheduled Inspections'), 1, NULL)) AS scheduled_stoppages,
+            COUNT(IIf(r.rtnName NOT IN ('Schedule Outage', 'Schedule Service', 'Scheduled - Adhoc', 
+                'Scheduled Inspections', 'Fault', 'IDF Fault', 'IDF Outage', 'Communication'), 1, NULL)) AS non_scheduled_stoppages,
+            COUNT(IIf(r.rtnName IN ('Fault','IDF Fault'), 1, NULL)) AS fault_stoppages,
+            ROUND(AVG(IIf(e.dtTS7DownFinish IS NOT NULL AND e.dtTS3MaintBegin IS NOT NULL, 
+                DateDiff('s', e.dtTS3MaintBegin, e.dtTS7DownFinish) / 3600.0, 0)), 2) AS avg_maint,
+            ROUND(AVG(IIf(e.dtTS7DownFinish IS NOT NULL AND e.dtTS1EventBegin IS NOT NULL, 
+                DateDiff('s', e.dtTS1EventBegin, e.dtTS7DownFinish) / 3600.0, 0)), 2) AS avg_down
+        FROM 
+            (tblEvent AS e
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+        WHERE 
+            e.dtTS1DownBegin BETWEEN ? AND ?
+        """,
+        (start_dt, end_dt)
+    )
+
+    rows = cursor.fetchall()
+
+    # Assuming the query will return one row with the count result
+    if rows:
+        total_stoppages = rows[0][0]
+        scheduled_stoppages = rows[0][1]
+        non_scheduled_stoppages = rows[0][2]
+        fault_stoppages = rows[0][3]
+        avg_maint = rows[0][4]
+        avg_down = rows[0][5]
+    else:
+        total_stoppages = 0
+        scheduled_stoppages = 0
+        non_scheduled_stoppages = 0
+        fault_stoppages = 0
+        avg_maint = 0
+        avg_down = 0
+
+    # Structure the result into a dictionary or list format
+    result = {
+        "total_stoppages": total_stoppages,
+        "scheduled_stoppages": scheduled_stoppages,
+        "non_scheduled_stoppages": non_scheduled_stoppages,
+        "fault_stoppages": fault_stoppages,
+        "avg_maint": avg_maint,
+        "avg_down": avg_down
+    }
+
+    return result
+
+@app.get("/offline_headings")
+def get_stoppage_legend(
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    cursor = db.cursor()
+
+    cursor.execute(
+        """
+        SELECT 
+            COUNT(IIf(e.dtTS7EventFinish IS NULL, 1, NULL)) AS total_offline
+        FROM 
+            (tblEvent AS e
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+        """
+    )
+
+    rows = cursor.fetchall()
+
+    # Assuming the query will return one row with the count result
+    if rows:
+        total_offline = rows[0][0]
+    else:
+        total_offline = 0
+
+    # Structure the result into a dictionary or list format
+    result = {
+        "total_offline": total_offline
+    }
+
+    return result
