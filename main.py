@@ -495,7 +495,7 @@ def get_services_details(
                     DateDiff('s', e.dtTS3MaintBegin, e.dtTS7DownFinish), 0)) / 
                 COUNT(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS3MaintBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL, 1, NULL)) / 3600.0
             , 2) AS avg_maint,
-            
+
             ROUND(
                 SUM(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS1EventBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL,
                     DateDiff('s', e.dtTS1EventBegin, e.dtTS7DownFinish), 0)) / 
@@ -536,3 +536,59 @@ def get_services_details(
         "avg_service_time": avg_service_time,
         "avg_down_time": avg_down_time
     }
+
+@app.get("/faults_details")
+def get_faults_details(
+    startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    cursor = db.cursor()
+
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    cursor.execute(
+        """
+        SELECT 
+            COUNT(*) AS total_faults,
+
+            COUNT(IIf(e.rstbyID = 2, 1, NULL)) AS reset_by_rcc,
+
+            AVG(IIf(e.dtTS7DownFinish IS NOT NULL AND e.dtTS1EventBegin IS NOT NULL,
+                DateDiff('s', e.dtTS1EventBegin, e.dtTS7DownFinish), NULL)) / 3600.0 AS avg_downtime_hrs,
+
+            AVG(IIf(e.dtTS2RCCNotify IS NOT NULL AND e.dtTS1EventBegin IS NOT NULL,
+                DateDiff('s', e.dtTS1EventBegin, e.dtTS2RCCNotify), NULL)) / 60.0 AS avg_rcc_response_mins
+
+        FROM tblEvent AS e
+        INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID
+        WHERE 
+            r.rtnName = 'Fault' AND
+            e.dtTS1DownBegin BETWEEN ? AND ?
+        """,
+        (start_dt, end_dt)
+    )
+
+    row = cursor.fetchone()
+
+    if row:
+        result = {
+            "total_faults": row[0],
+            "reset_by_rcc": row[1],
+            "avg_downtime_hrs": round(row[2] or 0, 2),
+            "avg_rcc_response_mins": round(row[3] or 0, 2)
+        }
+    else:
+        result = {
+            "total_faults": 0,
+            "reset_by_rcc": 0,
+            "avg_downtime_hrs": 0.0,
+            "avg_rcc_response_mins": 0.0
+        }
+
+    return result
+
