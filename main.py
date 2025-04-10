@@ -462,3 +462,77 @@ def get_stoppage_legend(
     }
 
     return result
+
+@app.get("/services_details")
+def get_services_details(
+    startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    cursor = db.cursor()
+
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    cursor.execute(
+        """
+        SELECT 
+            COUNT(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage'), 1, NULL)) AS total_services,
+
+            COUNT(IIf(r.rtnName IN ('Schedule Service', 'Scheduled - Adhoc', 'Scheduled Inspections', 'Scheduled Outage'), 1, NULL)) AS scheduled_services,
+
+            COUNT(IIf(
+                r.rtnName NOT IN (
+                    'Fault', 'IDF Fault', 'IDF Outage', 
+                    'Schedule Service', 'Scheduled - Adhoc', 'Scheduled Inspections', 'Scheduled Outage'
+                ), 1, NULL)) AS non_scheduled_services,
+
+            ROUND(
+                SUM(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS3MaintBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL,
+                    DateDiff('s', e.dtTS3MaintBegin, e.dtTS7DownFinish), 0)) / 
+                COUNT(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS3MaintBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL, 1, NULL)) / 3600.0
+            , 2) AS avg_maint,
+            
+            ROUND(
+                SUM(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS1EventBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL,
+                    DateDiff('s', e.dtTS1EventBegin, e.dtTS7DownFinish), 0)) / 
+                COUNT(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS1EventBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL, 1, NULL)) / 3600.0
+            , 2) AS avg_down_time
+            
+            
+
+        FROM 
+            tblEvent AS e
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID
+
+        WHERE 
+            e.dtTS1DownBegin BETWEEN ? AND ?
+        """,
+        (start_dt, end_dt)
+    )
+
+    row = cursor.fetchone()
+
+    if row:
+        total_services = row[0]
+        scheduled_services = row[1]
+        non_scheduled_services = row[2]
+        avg_service_time = row[3]
+        avg_down_time = row[4]
+    else:
+        total_services = 0
+        scheduled_services = 0
+        non_scheduled_services = 0
+        avg_service_time = 0.0
+        avg_down_time = 0.0
+
+    return {
+        "total_services": total_services,
+        "scheduled_services": scheduled_services,
+        "non_scheduled_services": non_scheduled_services,
+        "avg_service_time": avg_service_time,
+        "avg_down_time": avg_down_time
+    }
