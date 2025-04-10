@@ -592,3 +592,82 @@ def get_faults_details(
 
     return result
 
+@app.get("/idf_faults_heading")
+def get_idf_faults_heading(
+    startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    cursor = db.cursor()
+
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    cursor.execute(
+        """
+        SELECT 
+            e.stpID,
+            e.rstbyID,
+            e.dtTS1EventBegin,
+            e.dtTS7DownFinish
+        FROM tblEvent AS e
+        INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID
+        WHERE 
+            r.rtnName = 'IDF Fault' AND
+            e.dtTS1DownBegin BETWEEN ? AND ?
+        """,
+        (start_dt, end_dt)
+    )
+
+    rows = cursor.fetchall()
+
+    restart_count = 0
+    restart_reset_by_rcc = 0
+    restart_total_downtime = 0.0
+    restart_downtime_count = 0
+    restart_total_saving = 0.0
+
+    curtailment_count = 0
+
+    for row in rows:
+        stpID = row.stpID
+        rstbyID = row.rstbyID
+        begin = row.dtTS1EventBegin
+        finish = row.dtTS7DownFinish
+
+        if stpID == 434:  # IDF Restart Failure 102
+            restart_count += 1
+
+            if begin and finish:
+                downtime = (finish - begin).total_seconds() / 3600.0
+                restart_total_downtime += downtime
+                restart_downtime_count += 1
+
+                if rstbyID == 2:
+                    restart_total_saving += max(0, 2 - downtime)
+
+            if rstbyID == 2:
+                restart_reset_by_rcc += 1
+
+        elif stpID == 442:  # IDF Curtailment Failure 110
+            curtailment_count += 1
+
+    result = {
+    "total_idf_faults": len(rows),
+    "idf_restart_failures": {
+        "count": restart_count,
+        "reset_by_rcc": restart_reset_by_rcc,
+        "avg_downtime_hrs": round(restart_total_downtime / restart_downtime_count, 2) if restart_downtime_count else 0.0,
+        "total_saving_hrs": round(restart_total_saving, 2)
+    },
+    "idf_curtailment_failures": {
+        "count": curtailment_count
+    }
+}
+
+
+    return result
+
