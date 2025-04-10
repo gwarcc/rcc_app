@@ -224,6 +224,67 @@ async def get_faults(
 
     return {"faultsDataSet": data}
 
+@app.get("/get_idf")
+async def get_idf(
+    startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)):
+    cursor = db.cursor()
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+    cursor.execute(
+        """
+        SELECT 
+            e.dtTS1DownBegin, 
+            f.facABBR, 
+            a.astName, 
+            r.rtnName, 
+            s.stpStopDesc,
+            ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs,
+            rb.rstbyName,
+            ROUND((IIF(e.dtTS2RCCNotify IS NOT NULL, e.dtTS2RCCNotify, Now()) - e.dtTS1DownBegin) * 24 * 60, 2) AS ResponseTimeMins,
+            ROUND(
+                    IIF(
+                        r.rtnName = 'IDF Fault' AND 
+                        s.stpStopCode = 102 AND 
+                        e.rstbyID = 2 AND 
+                        ((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24) < 2,
+                        2 - ((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24),
+                        NULL
+                    ),
+                    2
+                ) AS IDFFaultTimeSaving,
+            n.evntntNote
+        FROM 
+            ((((((tblEvent AS e
+            INNER JOIN tblFacility AS f ON e.facID = f.facID)
+            INNER JOIN tblAsset AS a ON e.astID = a.astID)
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+            INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
+            INNER JOIN tblStopCodes as s ON e.stpID = s.stpID)
+            INNER JOIN tblRCCResetBy as rb ON e.rstbyID = rb.rstbyID)
+            LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
+        WHERE 
+            e.dtTS1DownBegin BETWEEN ? AND ?
+            AND (r.rtnName = 'IDF Fault' OR rr.rsnName = 'IDF fault');
+        """,
+        (start_dt, end_dt)
+        )  # Modify with your actual query
+    rows = cursor.fetchall()
+
+    # Extract the column names dynamically from the cursor description
+    columns = [column[0] for column in cursor.description]
+    
+    # Create a list of dictionaries with column names as keys
+    data = [dict(zip(columns, row)) for row in rows]
+
+    return {"idfDataSet": data}
+
 
 # reading from excel (raw data 2025)
 @app.get("/read-excel/", response_model=List[models.ExcelRow])
