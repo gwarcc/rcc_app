@@ -112,7 +112,7 @@ def get_offline_wtgs(db: pyodbc.Connection = Depends(get_db_access)):
             INNER JOIN tblAsset AS a ON e.astID = a.astID)
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
             INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
-            INNER JOIN tblEventNotes as n ON e.evntID = n.evntID
+            LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
         WHERE 
             e.dtTS7EventFinish IS NULL;
         """
@@ -731,4 +731,61 @@ def get_idf_faults_heading(
 
 
     return result
+
+
+
+@app.get("/get_stoppages_for_wf")
+async def get_services(
+    startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
+    windfarm: str = Query(None, description="Wind farm abbreviation (optional)"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    cursor = db.cursor()
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+    
+    # Build the query dynamically based on the presence of the windfarm filter
+    query = """
+    SELECT 
+        e.dtTS1DownBegin, 
+        f.facABBR, 
+        a.astName, 
+        r.rtnName, 
+        rr.rsnName, 
+        n.evntntNote
+    FROM 
+        ((((tblEvent AS e
+        INNER JOIN tblFacility AS f ON e.facID = f.facID)
+        INNER JOIN tblAsset AS a ON e.astID = a.astID)
+        INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+        INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
+        LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
+    WHERE 
+        e.dtTS1DownBegin BETWEEN ? AND ?
+    """
+    
+    # If a windfarm is provided, add it as a filter in the query
+    if windfarm:
+        query += " AND f.facABBR = ?"
+    
+    # Execute the query, passing the appropriate parameters
+    if windfarm:
+        cursor.execute(query, (start_dt, end_dt, windfarm))
+    else:
+        cursor.execute(query, (start_dt, end_dt))
+    
+    rows = cursor.fetchall()
+
+    # Extract the column names dynamically from the cursor description
+    columns = [column[0] for column in cursor.description]
+    
+    # Create a list of dictionaries with column names as keys
+    data = [dict(zip(columns, row)) for row in rows]
+
+    return {"stoppagesDataSet": data}
+
 
