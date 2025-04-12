@@ -312,6 +312,63 @@ async def read_excel():
     return rows
     
 
+# @app.get("/summary_stoppages")
+# def get_summary_stoppages(
+#     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
+#     enddate: str = Query(..., description="End date in YYYY-MM-DD"),
+#     db: pyodbc.Connection = Depends(get_db_access)
+# ):
+#     cursor = db.cursor()
+
+#     try:
+#         start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+#         end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+#     except ValueError:
+#         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+#     # Query Access database
+#     cursor.execute(
+#     """
+#     SELECT 
+#         f.facABBR AS windfarm, 
+#         r.rtnName AS category
+#     FROM 
+#         ((tblEvent AS e
+#         INNER JOIN tblFacility AS f ON e.facID = f.facID)
+#         INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+#     WHERE 
+#         e.dtTS1DownBegin BETWEEN ? AND ?
+#     """,
+#     (start_dt, end_dt)
+# )
+
+
+#     rows = cursor.fetchall()
+#     summary = defaultdict(lambda: defaultdict(int))
+
+
+#     for row in rows:
+#         wf = row.windfarm
+#         cat = row.category.strip().lower() if row.category else ""
+
+#         summary[wf]["Total Stops"] += 1
+
+#         if cat == "schedule service":
+#             summary[wf]["Scheduled Services"] += 1
+#         elif cat in ["fault", "idf fault"]:
+#             summary[wf]["Faults"] += 1
+#         else:
+#             summary[wf]["Non Scheduled Services"] += 1
+        
+#     result = []
+#     for wf, types in summary.items():
+#         for typ, count in types.items():
+#             result.append({"windfarm": wf, "type": typ, "count": count})
+
+#     return result
+
+from collections import defaultdict
+
 @app.get("/summary_stoppages")
 def get_summary_stoppages(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
@@ -326,31 +383,30 @@ def get_summary_stoppages(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
-    # Query Access database
-    cursor.execute(
-    """
-    SELECT 
-        f.facABBR AS windfarm, 
-        r.rtnName AS category
-    FROM 
-        ((tblEvent AS e
-        INNER JOIN tblFacility AS f ON e.facID = f.facID)
-        INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
-    WHERE 
-        e.dtTS1DownBegin BETWEEN ? AND ?
-    """,
-    (start_dt, end_dt)
-)
-
+    cursor.execute("""
+        SELECT 
+            f.facABBR AS windfarm,
+            r.rtnName AS category,
+            e.dtTS1EventBegin AS stop_time,
+            e.dtTS3MaintBegin AS maint_time,
+            e.dtTS7EventFinish AS start_time
+        FROM 
+            ((tblEvent AS e
+            INNER JOIN tblFacility AS f ON e.facID = f.facID)
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+        WHERE 
+            e.dtTS1DownBegin BETWEEN ? AND ?
+    """, (start_dt, end_dt))
 
     rows = cursor.fetchall()
-    summary = defaultdict(lambda: defaultdict(int))
 
+    summary = defaultdict(lambda: defaultdict(int))
+    downtime_data = defaultdict(list)
+    service_data = defaultdict(list)
 
     for row in rows:
         wf = row.windfarm
         cat = row.category.strip().lower() if row.category else ""
-
         summary[wf]["Total Stops"] += 1
 
         if cat == "schedule service":
@@ -359,14 +415,38 @@ def get_summary_stoppages(
             summary[wf]["Faults"] += 1
         else:
             summary[wf]["Non Scheduled Services"] += 1
-        
-    result = []
+
+        if row.start_time and row.stop_time:
+            dt = (row.start_time - row.stop_time).total_seconds() / 3600
+            downtime_data[wf].append(dt)
+
+        if row.maint_time and row.start_time:
+            mt = (row.start_time - row.maint_time).total_seconds() / 3600
+            service_data[wf].append(mt)
+
+    result = {
+        "stoppages": [],
+        "avg_hours": []
+    }
+
     for wf, types in summary.items():
         for typ, count in types.items():
-            result.append({"windfarm": wf, "type": typ, "count": count})
+            result["stoppages"].append({
+                "windfarm": wf,
+                "type": typ,
+                "count": count
+            })
+
+    for wf in set(downtime_data.keys()).union(service_data.keys()):
+        avg_down = round(sum(downtime_data[wf]) / len(downtime_data[wf]), 2) if downtime_data[wf] else 0
+        avg_service = round(sum(service_data[wf]) / len(service_data[wf]), 2) if service_data[wf] else 0
+        result["avg_hours"].append({
+            "windfarm": wf,
+            "avg_downtime_hrs": avg_down,
+            "avg_service_hrs": avg_service
+        })
 
     return result
-
 
 
 @app.get("/stoppage_legend")
