@@ -114,7 +114,11 @@ def get_offline_wtgs(db: pyodbc.Connection = Depends(get_db_access)):
             INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
             LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
         WHERE 
-            e.dtTS7EventFinish IS NULL;
+            e.dtTS7EventFinish IS NULL
+        ORDER BY 
+            e.dtTS1DownBegin DESC,
+            f.facABBR ASC,
+            a.astName DESC;
         """
         )  # Modify with your actual query
     rows = cursor.fetchall()
@@ -155,12 +159,16 @@ async def get_services(
             INNER JOIN tblFacility AS f ON e.facID = f.facID)
             INNER JOIN tblAsset AS a ON e.astID = a.astID)
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
-            INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
+            LEFT JOIN tblReason as rr ON e.rsnID = rr.rsnID)
             LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
         WHERE 
             e.dtTS1DownBegin BETWEEN ? AND ?
             AND r.rtnName NOT IN ('Fault', 'IDF Outage', 'Other', 'IDF Fault')
             AND rr.rsnName <> 'Communication loss'
+        ORDER BY 
+            f.facABBR ASC,
+            e.dtTS1DownBegin DESC,
+            a.astName DESC;
         """,
         (start_dt, end_dt)
         )  # Modify with your actual query
@@ -199,18 +207,26 @@ async def get_faults(
             fa.fltDesc,
             e.dtTS1DownBegin,
             e.dtTS7DownFinish,
-            ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs
+            ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs,
+            rrt.rsttypName AS ResetType,
+            rrb.rstbyName AS ResetBy
         FROM 
-            (((((tblEvent AS e
+            (((((((tblEvent AS e
             INNER JOIN tblFacility AS f ON e.facID = f.facID)
             INNER JOIN tblAsset AS a ON e.astID = a.astID)
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
             INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
             LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID)
-            INNER JOIN tblFaultCode as fa ON e.fltID = fa.fltID
+            INNER JOIN tblFaultCode as fa ON e.fltID = fa.fltID)
+            LEFT JOIN tblRCCResetType as rrt ON e.rsttypID = rrt.rsttypID)
+            LEFT JOIN tblRCCResetBy as rrb ON e.rstbyID = rrb.rstbyID
         WHERE 
             e.fltID IS NOT NULL AND
             e.dtTS1DownBegin BETWEEN ? AND ?
+        ORDER BY 
+            e.dtTS1DownBegin DESC,
+            f.facABBR ASC,
+            a.astName DESC;
         """,
         (start_dt, end_dt)
         )  # Modify with your actual query
@@ -271,7 +287,11 @@ async def get_idf(
             LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
         WHERE 
             e.dtTS1DownBegin BETWEEN ? AND ?
-            AND (r.rtnName = 'IDF Fault' OR rr.rsnName = 'IDF fault');
+            AND (r.rtnName = 'IDF Fault' OR rr.rsnName = 'IDF fault')
+        ORDER BY 
+            e.dtTS1DownBegin DESC,
+            f.facABBR ASC,
+            a.astName DESC;
         """,
         (start_dt, end_dt)
         )  # Modify with your actual query
@@ -502,6 +522,9 @@ def get_stoppage_legend(
                 "rsnName": rsn,
                 "count": count
             })
+    
+    # Sort by count descending
+    result.sort(key=lambda x: x["count"], reverse=True)
 
     return result
 
@@ -647,7 +670,7 @@ def get_services_details(
 
         FROM 
             tblEvent AS e
-            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID
+            LEFT JOIN tblRationale AS r ON e.rtnID = r.rtnID
 
         WHERE 
             e.dtTS1DownBegin BETWEEN ? AND ?
@@ -813,7 +836,7 @@ def get_idf_faults_heading(
     return result
 
 
-
+# get stoppages for any wind farm
 @app.get("/get_stoppages_for_wf")
 async def get_services(
     startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
@@ -869,3 +892,53 @@ async def get_services(
     return {"stoppagesDataSet": data}
 
 
+# reading offline wtgs for any wind farm
+@app.get("/offline_wtgs_for_wf")
+def get_offline_wtgs_for_wf(
+    windfarm: str = Query(default=None, description="Filter by wind farm abbreviation"),
+    db: pyodbc.Connection = Depends(get_db_access)
+ ):
+    cursor = db.cursor()
+
+    # Build dynamic WHERE clause based on windfarm filter
+    query = """
+        SELECT 
+            e.dtTS1DownBegin, 
+            f.facABBR, 
+            a.astName, 
+            r.rtnName, 
+            rr.rsnName, 
+            n.evntntNote,
+            ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs
+        FROM 
+            ((((tblEvent AS e
+            INNER JOIN tblFacility AS f ON e.facID = f.facID)
+            INNER JOIN tblAsset AS a ON e.astID = a.astID)
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+            INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
+            LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
+        WHERE 
+            e.dtTS7EventFinish IS NULL
+    """
+
+    params = []
+
+    if windfarm:
+        query += " AND f.facABBR = ?"
+        params.append(windfarm)
+
+    query += """
+        ORDER BY 
+            e.dtTS1DownBegin DESC,
+            f.facABBR ASC,
+            a.astName DESC
+    """
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+
+    # Extract column names
+    columns = [column[0] for column in cursor.description]
+    data = [dict(zip(columns, row)) for row in rows]
+
+    return {"offlineWtgsWFDataSet": data}
