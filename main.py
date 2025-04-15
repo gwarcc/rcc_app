@@ -856,6 +856,7 @@ async def get_services(
     SELECT 
         f.facABBR, 
         a.astName, 
+        e.evntWindSpeed,
         r.rtnName, 
         rr.rsnName, 
         s.stpStopCode,
@@ -864,17 +865,22 @@ async def get_services(
         fa.fltDesc,
         ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs,
         e.dtTS1DownBegin, 
+        e.dtTS2RCCNotify,
         e.dtTS7EventFinish,
         e.dtTS3MaintBegin,
+        rt.rsttypName,
+        rb.rstbyName,
         n.evntntNote
     FROM 
-        ((((((tblEvent AS e
+        ((((((((tblEvent AS e
         INNER JOIN tblFacility AS f ON e.facID = f.facID)
         INNER JOIN tblAsset AS a ON e.astID = a.astID)
         INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
         INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
         INNER JOIN tblStopCodes as s ON e.stpID = s.stpID)
         LEFT JOIN tblFaultCode as fa ON e.fltID = fa.fltID)
+        LEFT JOIN tblRCCResetType as rt ON e.rsttypID = rt.rsttypID)
+        LEFT JOIN tblRCCResetBy as rb ON e.rstbyID = rb.rstbyID)
         LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
     WHERE 
         e.dtTS1DownBegin BETWEEN ? AND ?
