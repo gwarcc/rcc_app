@@ -854,18 +854,27 @@ async def get_services(
     # Build the query dynamically based on the presence of the windfarm filter
     query = """
     SELECT 
-        e.dtTS1DownBegin, 
         f.facABBR, 
         a.astName, 
         r.rtnName, 
         rr.rsnName, 
+        s.stpStopCode,
+        s.stpStopDesc,
+        fa.fltCode,
+        fa.fltDesc,
+        ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs,
+        e.dtTS1DownBegin, 
+        e.dtTS7EventFinish,
+        e.dtTS3MaintBegin,
         n.evntntNote
     FROM 
-        ((((tblEvent AS e
+        ((((((tblEvent AS e
         INNER JOIN tblFacility AS f ON e.facID = f.facID)
         INNER JOIN tblAsset AS a ON e.astID = a.astID)
         INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
         INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
+        INNER JOIN tblStopCodes as s ON e.stpID = s.stpID)
+        LEFT JOIN tblFaultCode as fa ON e.fltID = fa.fltID)
         LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
     WHERE 
         e.dtTS1DownBegin BETWEEN ? AND ?
