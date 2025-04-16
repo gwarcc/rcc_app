@@ -957,3 +957,56 @@ def get_offline_wtgs_for_wf(
     data = [dict(zip(columns, row)) for row in rows]
 
     return {"offlineWtgsWFDataSet": data}
+
+@app.get("/top_fault_codes_detailed")
+def get_top_fault_codes_detailed(
+    startdate: str = Query(..., description="Start date YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    cursor = db.cursor()
+    cursor.execute(
+        """
+        SELECT TOP 10 
+            fa.fltCode, 
+            fa.fltDesc, 
+            COUNT(*) AS frequency,
+            ROUND(SUM(
+                IIF(e.dtTS7DownFinish IS NOT NULL, 
+                    (e.dtTS7DownFinish - e.dtTS1DownBegin) * 24, 
+                    (Now() - e.dtTS1DownBegin) * 24
+                )
+            ), 2) AS total_downtime_hrs
+        FROM 
+            ((tblEvent AS e
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+            INNER JOIN tblFaultCode AS fa ON e.fltID = fa.fltID)
+        WHERE 
+            r.rtnName = 'Fault'
+            AND e.dtTS1DownBegin BETWEEN ? AND ?
+        GROUP BY 
+            fa.fltCode, fa.fltDesc
+        ORDER BY 
+            COUNT(*) DESC
+        """,
+        (start_dt, end_dt)
+    )
+
+    rows = cursor.fetchall()
+    result = [
+        {
+            "fault_code": row[0],
+            "description": row[1],
+            "count": row[2],
+            "total_downtime_hrs": row[3]
+        } 
+        for row in rows
+    ]
+
+    return {"topFaultCodesDetailed": result}
