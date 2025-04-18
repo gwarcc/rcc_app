@@ -209,17 +209,18 @@ async def get_faults(
             e.dtTS7DownFinish,
             ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs,
             rrt.rsttypName AS ResetType,
-            rrb.rstbyName AS ResetBy
+            rrb.rstbyName AS ResetBy,
+            n.evntntNote
         FROM 
             (((((((tblEvent AS e
             INNER JOIN tblFacility AS f ON e.facID = f.facID)
             INNER JOIN tblAsset AS a ON e.astID = a.astID)
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
-            INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
-            LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID)
-            INNER JOIN tblFaultCode as fa ON e.fltID = fa.fltID)
-            LEFT JOIN tblRCCResetType as rrt ON e.rsttypID = rrt.rsttypID)
-            LEFT JOIN tblRCCResetBy as rrb ON e.rstbyID = rrb.rstbyID
+            INNER JOIN tblReason AS rr ON e.rsnID = rr.rsnID)
+            INNER JOIN tblFaultCode AS fa ON e.fltID = fa.fltID)
+            LEFT JOIN tblRCCResetType AS rrt ON e.rsttypID = rrt.rsttypID)
+            LEFT JOIN tblRCCResetBy AS rrb ON e.rstbyID = rrb.rstbyID)
+            LEFT JOIN tblEventNotes AS n ON e.evntID = n.evntID
         WHERE 
             e.fltID IS NOT NULL AND
             e.dtTS1DownBegin BETWEEN ? AND ?
