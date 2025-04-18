@@ -1011,11 +1011,12 @@ def get_top_fault_codes_detailed(
 
     return {"topFaultCodesDetailed": result}
 
-@app.get("/syhwf_prod_stats")
-def get_syhwf_prod_stats(
-    db: pyodbc.Connection = Depends(get_db_prod_stats),
+@app.get("/prod_stats_by_site")
+def get_prod_stats_by_site(
+    facid: int = Query(..., description="Facility ID (e.g. 8 for SYHWF)"),
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
-    enddate: str = Query(..., description="End date in YYYY-MM-DD")
+    enddate: str = Query(..., description="End date in YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_prod_stats)
 ):
     try:
         start_dt = datetime.strptime(startdate, "%Y-%m-%d")
@@ -1032,13 +1033,16 @@ def get_syhwf_prod_stats(
               AND [{date_column}] BETWEEN ? AND ?
         """
 
-        cursor.execute(sql, (8, start_dt, end_dt))
+        cursor.execute(sql, (facid, start_dt, end_dt))
         row = cursor.fetchone()
 
         if not row or row[0] is None:
-            return {"message": f"No data for facID = 8 between {startdate} and {enddate}"}
+            return {
+                "message": f"No data for facID = {facid} between {startdate} and {enddate}"
+            }
 
         return {
+            "facID": facid,
             "AVG Wind Speed": round(row[0], 2),
             "Total Production (mWH)": round(row[1], 2)
         }
