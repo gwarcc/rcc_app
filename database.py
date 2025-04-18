@@ -12,10 +12,19 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 #miscrosoft access config
 ACCESS_DB_PATH = r"C:\Users\gwarcc\Music\RCCEventTracker V2.2.008 Runtime.accdb"
 ACCESS_CONNECTION_STRING = r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=' + ACCESS_DB_PATH
+
+# Microsoft Access config - Prod Stats
+PROD_STATS_DB_PATH = r"C:\Users\gwarcc\goldwindaustralia\Service SharePoint - Service Technical Library\22 RCC\RCC\22. RCC Event Tracker\Database\RCC Prod Stats V1.0.accdb"
+PROD_STATS_CONNECTION_STRING = (
+    r"DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=" + PROD_STATS_DB_PATH
+)
+
 def get_access_connection():
     conn = pyodbc.connect(ACCESS_CONNECTION_STRING)
     return conn
 
+def get_prod_stats_connection():
+    return pyodbc.connect(PROD_STATS_CONNECTION_STRING)
 
 Base = declarative_base()
 
@@ -36,3 +45,10 @@ def get_db_access():
     finally:
         conn.close()
 
+# Access session - Prod Stats
+def get_db_prod_stats():
+    conn = get_prod_stats_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()

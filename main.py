@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, Request, APIRouter, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from rcc_app import models, schemas, crud
-from .database import engine, Base, get_db, get_db_access
+from .database import engine, Base, get_db, get_db_access, get_db_prod_stats
 from datetime import datetime,timedelta
 import pyodbc
 import socket
@@ -855,7 +855,7 @@ async def get_services(
     query = """
     SELECT 
         f.facABBR, 
-        a.astName, 
+        a.astDisplay, 
         e.evntWindSpeed,
         r.rtnName, 
         rr.rsnName, 
@@ -1010,3 +1010,38 @@ def get_top_fault_codes_detailed(
     ]
 
     return {"topFaultCodesDetailed": result}
+
+@app.get("/syhwf_prod_stats")
+def get_syhwf_prod_stats(
+    db: pyodbc.Connection = Depends(get_db_prod_stats),
+    startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in YYYY-MM-DD")
+):
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d")
+
+        cursor = db.cursor()
+        date_column = 'spDate'
+
+        sql = f"""
+            SELECT AVG(spAvgWS) AS avg_wind_speed,
+                   SUM(spActEnergyExport)/1000.0 AS production_mwh
+            FROM tblStatsProd
+            WHERE facID = ?
+              AND [{date_column}] BETWEEN ? AND ?
+        """
+
+        cursor.execute(sql, (8, start_dt, end_dt))
+        row = cursor.fetchone()
+
+        if not row or row[0] is None:
+            return {"message": f"No data for facID = 8 between {startdate} and {enddate}"}
+
+        return {
+            "AVG Wind Speed": round(row[0], 2),
+            "Total Production (mWH)": round(row[1], 2)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
