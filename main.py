@@ -101,7 +101,7 @@ def get_offline_wtgs(db: pyodbc.Connection = Depends(get_db_access)):
         SELECT 
             e.dtTS1DownBegin, 
             f.facABBR, 
-            a.astName, 
+            a.astDisplay, 
             r.rtnName, 
             rr.rsnName, 
             n.evntntNote,
@@ -118,7 +118,7 @@ def get_offline_wtgs(db: pyodbc.Connection = Depends(get_db_access)):
         ORDER BY 
             e.dtTS1DownBegin DESC,
             f.facABBR ASC,
-            a.astName DESC;
+            a.astDisplay DESC;
         """
         )  # Modify with your actual query
     rows = cursor.fetchall()
@@ -150,7 +150,7 @@ async def get_services(
         SELECT 
             e.dtTS1DownBegin, 
             f.facABBR, 
-            a.astName, 
+            a.astDisplay, 
             r.rtnName, 
             rr.rsnName, 
             n.evntntNote
@@ -168,7 +168,7 @@ async def get_services(
         ORDER BY 
             f.facABBR ASC,
             e.dtTS1DownBegin DESC,
-            a.astName DESC;
+            a.astDisplay DESC;
         """,
         (start_dt, end_dt)
         )  # Modify with your actual query
@@ -201,7 +201,7 @@ async def get_faults(
         """
         SELECT 
             f.facABBR, 
-            a.astName, 
+            a.astDisplay, 
             r.rtnName, 
             fa.fltCode,
             fa.fltDesc,
@@ -227,7 +227,7 @@ async def get_faults(
         ORDER BY 
             e.dtTS1DownBegin DESC,
             f.facABBR ASC,
-            a.astName DESC;
+            a.astDisplay DESC;
         """,
         (start_dt, end_dt)
         )  # Modify with your actual query
@@ -259,7 +259,7 @@ async def get_idf(
         SELECT 
             e.dtTS1DownBegin, 
             f.facABBR, 
-            a.astName, 
+            a.astDisplay, 
             r.rtnName, 
             s.stpStopDesc,
             ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs,
@@ -292,7 +292,7 @@ async def get_idf(
         ORDER BY 
             e.dtTS1DownBegin DESC,
             f.facABBR ASC,
-            a.astName DESC;
+            a.astDisplay DESC;
         """,
         (start_dt, end_dt)
         )  # Modify with your actual query
@@ -552,7 +552,7 @@ def get_stoppage_legend(
                 AND r.rtnName NOT LIKE '*IDF Outage*', 1, NULL)) AS total_stoppages,
             COUNT(IIf(r.rtnName IN ('Schedule Service', 'Scheduled - Adhoc', 'Scheduled Inspections'), 1, NULL)) AS scheduled_stoppages,
             COUNT(IIf(r.rtnName NOT IN ('Schedule Outage', 'Schedule Service', 'Scheduled - Adhoc', 
-                'Scheduled Inspections', 'Fault', 'IDF Fault', 'IDF Outage', 'Communication'), 1, NULL)) AS non_scheduled_stoppages,
+                'Scheduled Inspections', 'Fault', 'IDF Fault', 'Communication'), 1, NULL)) AS non_scheduled_stoppages,
             COUNT(IIf(r.rtnName IN ('Fault','IDF Fault'), 1, NULL)) AS fault_stoppages,
             ROUND(AVG(IIf(e.dtTS7DownFinish IS NOT NULL AND e.dtTS3MaintBegin IS NOT NULL, 
                 DateDiff('s', e.dtTS3MaintBegin, e.dtTS7DownFinish) / 3600.0, 0)), 2) AS avg_maint,
@@ -921,7 +921,7 @@ def get_offline_wtgs_for_wf(
         SELECT 
             e.dtTS1DownBegin, 
             f.facABBR, 
-            a.astName, 
+            a.astDisplay, 
             r.rtnName, 
             rr.rsnName, 
             n.evntntNote,
@@ -947,7 +947,7 @@ def get_offline_wtgs_for_wf(
         ORDER BY 
             e.dtTS1DownBegin DESC,
             f.facABBR ASC,
-            a.astName DESC
+            a.astDisplay DESC
     """
 
     cursor.execute(query, params)
