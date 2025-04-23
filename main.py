@@ -1137,6 +1137,64 @@ async def get_production_analysis(
 
     return {"productionAnalysisDataSet": combined_data}
 
+@app.get("/get_schedule_service_analysis")
+def get_schedule_service_analysis(
+    startdate: str = Query(..., description="Start date YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    cursor = db.cursor()
+    cursor.execute(
+        """
+        SELECT  
+            f.facABBR,
+            a.astDisplay,  
+            COUNT(*) AS frequency,
+            ROUND(SUM(
+                IIF(e.dtTS7DownFinish IS NOT NULL, 
+                    (e.dtTS7DownFinish - e.dtTS1DownBegin) * 24, 
+                    (Now() - e.dtTS1DownBegin) * 24
+                )
+            ), 2) AS total_downtime_hrs
+        FROM 
+            ((((tblEvent AS e
+            INNER JOIN tblFacility AS f ON e.facID = f.facID)
+            INNER JOIN tblAsset AS a ON e.astID = a.astID)
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+            LEFT JOIN tblReason as rr ON e.rsnID = rr.rsnID)
+            LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
+        WHERE 
+            e.dtTS1DownBegin BETWEEN ? AND ?
+            AND r.rtnName IN ('Schedule Service', 'Schedule Outage')
+            AND rr.rsnName <> 'Communication loss'
+            AND n.evntntNote <> 'DELETED'
+        GROUP BY
+            f.facABBR, a.astDisplay, r.rtnName
+        ORDER BY 
+            f.facABBR ASC,
+            COUNT(*) DESC
+        """,
+        (start_dt, end_dt)
+    )
+
+    rows = cursor.fetchall()
+    result = [
+        {
+            "wind_farm": row[0],
+            "wtg": row[1],
+            "count": row[2],
+            "total_downtime_hrs": row[3]
+        } 
+        for row in rows
+    ]
+
+    return {"scheduledserviceAnalysisDataSet": result}
 
 @app.get("/get_service_analysis")
 def get_service_analysis(
@@ -1172,7 +1230,7 @@ def get_service_analysis(
             LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
         WHERE 
             e.dtTS1DownBegin BETWEEN ? AND ?
-            AND r.rtnName NOT IN ('Fault', 'IDF Outage', 'Other', 'IDF Fault')
+            AND r.rtnName NOT IN ('Fault', 'IDF Outage', 'Other', 'IDF Fault', 'Schedule Service', 'Schedule Outage')
             AND rr.rsnName <> 'Communication loss'
             AND n.evntntNote <> 'DELETED'
         GROUP BY
@@ -1198,3 +1256,97 @@ def get_service_analysis(
     return {"serviceAnalysisDataSet": result}
 
 
+@app.get("/get_production_analysis_3_duration")
+async def get_production_analysis_3_duration(
+    startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
+    db_access: pyodbc.Connection = Depends(get_db_access),
+    db_prod_stats: pyodbc.Connection = Depends(get_db_prod_stats)
+):
+    cursor_access = db_access.cursor()
+    cursor_prod_stats = db_prod_stats.cursor()
+
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+        # date calculate
+        lastweek_start = start_dt - timedelta(days=7)
+        lastweek_end = end_dt - timedelta(days=7)
+        lastyear_start = start_dt.replace(year=start_dt.year - 1)
+        lastyear_end = end_dt.replace(year=end_dt.year - 1)
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+
+    def fetch_stats(sd, ed):
+        # Access
+        query_1 = """
+        SELECT 
+            DatePart('ww', CDate(tblEvent.dtTS1DownBegin)) AS weeknum, 
+            tblFacility.facABBR, 
+            COUNT(tblEvent.evntID) AS totalEntries, 
+            SUM(ROUND(
+                (IIF(tblEvent.dtTS7EventFinish IS NOT NULL, tblEvent.dtTS7EventFinish, Now()) - tblEvent.dtTS1DownBegin) * 24, 2
+            )) AS DowntimeHrs 
+        FROM tblFacility 
+        INNER JOIN tblEvent ON tblFacility.facID = tblEvent.facID 
+        WHERE tblEvent.dtTS1DownBegin BETWEEN ? AND ? 
+        GROUP BY DatePart('ww', CDate(tblEvent.dtTS1DownBegin)), tblFacility.facABBR
+        """
+        cursor_access.execute(query_1, (sd, ed))
+        access_rows = cursor_access.fetchall()
+        access_cols = [column[0] for column in cursor_access.description]
+        access_data = { (row[0], row[1]): dict(zip(access_cols, row)) for row in access_rows }
+
+        # Prod Stats
+        query_2 = """
+        SELECT 
+            DatePart('ww', CDate(tblStatsProd.spDate)) AS weeknum, 
+            tblFacility.facABBR, 
+            SUM(tblStatsProd.spActEnergyExport) AS TotalExpPower, 
+            ROUND(AVG(tblStatsProd.spAvgWS), 2) AS avgWS
+        FROM 
+            tblFacility 
+        INNER JOIN tblStatsProd ON tblFacility.facID = tblStatsProd.facID
+        WHERE tblStatsProd.spDate BETWEEN ? AND ? 
+        GROUP BY DatePart('ww', CDate(tblStatsProd.spDate)), tblFacility.facABBR
+        """
+        cursor_prod_stats.execute(query_2, (sd, ed))
+        prod_rows = cursor_prod_stats.fetchall()
+        prod_cols = [column[0] for column in cursor_prod_stats.description]
+        prod_data = { (row[0], row[1]): dict(zip(prod_cols, row)) for row in prod_rows }
+
+        return access_data, prod_data
+
+    # Three durations
+    access_now, prod_now = fetch_stats(start_dt, end_dt)
+    access_lastweek, prod_lastweek = fetch_stats(lastweek_start, lastweek_end)
+    access_lastyear, prod_lastyear = fetch_stats(lastyear_start, lastyear_end)
+
+    # combine keys
+    all_keys = set()
+    all_keys.update(access_now.keys(), access_lastweek.keys(), access_lastyear.keys(),
+                   prod_now.keys(), prod_lastweek.keys(), prod_lastyear.keys())
+
+    merged = []
+    for key in sorted(all_keys, key=lambda x: (x[1], x[0])):  # facABBR, weeknum
+        row = {
+            "weeknum": key[0],
+            "facABBR": key[1]
+        }
+        # current week
+        for prefix, d1, d2 in [
+            ("current", access_now, prod_now),
+            ("lastweek", access_lastweek, prod_lastweek),
+            ("lastyear", access_lastyear, prod_lastyear)
+        ]:
+            d1_row = d1.get(key, {})
+            d2_row = d2.get(key, {})
+            for k, v in d1_row.items():
+                if k not in ["weeknum", "facABBR"]:
+                    row[f"{prefix}_{k}"] = v
+            for k, v in d2_row.items():
+                if k not in ["weeknum", "facABBR"]:
+                    row[f"{prefix}_{k}"] = v
+        merged.append(row)
+
+    return {"productionAnalysisDataSet": merged}
