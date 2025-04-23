@@ -10,7 +10,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 #miscrosoft access config
-ACCESS_DB_PATH = r"C:\Users\gwarcc\Music\RCCEventTracker V2.2.008 Runtime.accdb"
+ACCESS_DB_PATH = r"c:\users\gwarcc\goldwindaustralia\service sharepoint - service technical library\22 rcc\rcc\22. rcc event tracker\database\rcc database v2.3.accdb"
 ACCESS_CONNECTION_STRING = r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=' + ACCESS_DB_PATH
 
 # Microsoft Access config - Prod Stats

@@ -165,6 +165,7 @@ async def get_services(
             e.dtTS1DownBegin BETWEEN ? AND ?
             AND r.rtnName NOT IN ('Fault', 'IDF Outage', 'Other', 'IDF Fault')
             AND rr.rsnName <> 'Communication loss'
+            AND n.evntntNote <> 'DELETED'
         ORDER BY 
             f.facABBR ASC,
             e.dtTS1DownBegin DESC,
@@ -289,6 +290,7 @@ async def get_idf(
         WHERE 
             e.dtTS1DownBegin BETWEEN ? AND ?
             AND (r.rtnName = 'IDF Fault' OR rr.rsnName = 'IDF fault')
+            AND n.evntntNote <> 'DELETED'
         ORDER BY 
             e.dtTS1DownBegin DESC,
             f.facABBR ASC,
@@ -415,7 +417,7 @@ def get_summary_stoppages(
             ((tblEvent AS e
             INNER JOIN tblFacility AS f ON e.facID = f.facID)
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
-        WHERE 
+        WHERE       
             e.dtTS1DownBegin BETWEEN ? AND ?
     """, (start_dt, end_dt))
 
@@ -876,15 +878,16 @@ async def get_services(
         ((((((((tblEvent AS e
         INNER JOIN tblFacility AS f ON e.facID = f.facID)
         INNER JOIN tblAsset AS a ON e.astID = a.astID)
-        INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+        LEFT JOIN tblRationale AS r ON e.rtnID = r.rtnID)
         INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
         INNER JOIN tblStopCodes as s ON e.stpID = s.stpID)
         LEFT JOIN tblFaultCode as fa ON e.fltID = fa.fltID)
         LEFT JOIN tblRCCResetType as rt ON e.rsttypID = rt.rsttypID)
         LEFT JOIN tblRCCResetBy as rb ON e.rstbyID = rb.rstbyID)
         LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
-    WHERE 
+    WHERE
         e.dtTS1DownBegin BETWEEN ? AND ?
+        AND (n.evntntNote <> 'DELETED' OR n.evntntNote IS NULL OR n.evntntNote = '')
     """
     
     # If a windfarm is provided, add it as a filter in the query
@@ -935,6 +938,7 @@ def get_offline_wtgs_for_wf(
             LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
         WHERE 
             e.dtTS7EventFinish IS NULL
+            AND n.evntntNote <> 'DELETED'
     """
 
     params = []
@@ -1050,3 +1054,147 @@ def get_prod_stats_by_site(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+# get production analysis
+@app.get("/get_production_analysis")
+async def get_production_analysis(
+    startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
+    db_access: pyodbc.Connection = Depends(get_db_access),
+    db_prod_stats: pyodbc.Connection = Depends(get_db_prod_stats)
+):
+    cursor_access = db_access.cursor()
+    cursor_prod_stats = db_prod_stats.cursor()
+
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+
+    # Log parameters to verify the values
+    print(f"Executing queries with start_dt={start_dt}, end_dt={end_dt}")
+
+    # Access query (tblEvent and tblFacility) with CDate for DatePart
+    query_1 = """
+    SELECT 
+        DatePart('ww', CDate(tblEvent.dtTS1DownBegin)) AS weeknum, 
+        tblFacility.facABBR, 
+        COUNT(tblEvent.evntID) AS totalEntries, 
+        SUM(ROUND(
+            (IIF(tblEvent.dtTS7EventFinish IS NOT NULL, tblEvent.dtTS7EventFinish, Now()) - tblEvent.dtTS1DownBegin) * 24, 2
+        )) AS DowntimeHrs 
+    FROM tblFacility 
+    INNER JOIN tblEvent ON tblFacility.facID = tblEvent.facID 
+    WHERE tblEvent.dtTS1DownBegin BETWEEN ? AND ? 
+    GROUP BY DatePart('ww', CDate(tblEvent.dtTS1DownBegin)), tblFacility.facABBR
+    """
+
+    # Prod Stats query (tblStatsProd)
+    query_2 = """
+    SELECT 
+        DatePart('ww', CDate(tblStatsProd.spDate)) AS weeknum, 
+        tblFacility.facABBR, 
+        SUM(tblStatsProd.spActEnergyExport) AS TotalExpPower, 
+        ROUND(AVG(tblStatsProd.spAvgWS), 2) AS avgWS
+    FROM 
+        tblFacility 
+    INNER JOIN tblStatsProd ON tblFacility.facID = tblStatsProd.facID
+    WHERE tblStatsProd.spDate BETWEEN ? AND ? 
+    GROUP BY DatePart('ww', CDate(tblStatsProd.spDate)), tblFacility.facABBR
+    """
+
+    # Log date values for debugging
+    print(f"Start Date: {start_dt}, End Date: {end_dt}")
+
+    # Execute the queries separately
+    cursor_access.execute(query_1, (start_dt, end_dt))
+    rows_1 = cursor_access.fetchall()
+
+    cursor_prod_stats.execute(query_2, (start_dt, end_dt))
+    rows_2 = cursor_prod_stats.fetchall()
+
+    # Process the results from the first query (Access)
+    columns_1 = [column[0] for column in cursor_access.description]
+    data_1 = [dict(zip(columns_1, row)) for row in rows_1]
+
+    # Process the results from the second query (Prod Stats)
+    columns_2 = [column[0] for column in cursor_prod_stats.description]
+    data_2 = [dict(zip(columns_2, row)) for row in rows_2]
+
+    # Combine data from both queries (you can modify this to join based on weeknum and facABBR if necessary)
+    combined_data = []
+
+    for row_1 in data_1:
+        matching_row = next((row_2 for row_2 in data_2 if row_2['weeknum'] == row_1['weeknum'] and row_2['facABBR'] == row_1['facABBR']), None)
+        if matching_row:
+            # Merge the data from both sources
+            combined_row = {**row_1, **matching_row}
+            combined_data.append(combined_row)
+        else:
+            # If no match, just add row_1 (you can modify as needed)
+            combined_data.append(row_1)
+
+    return {"productionAnalysisDataSet": combined_data}
+
+
+@app.get("/get_service_analysis")
+def get_service_analysis(
+    startdate: str = Query(..., description="Start date YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    cursor = db.cursor()
+    cursor.execute(
+        """
+        SELECT  
+            f.facABBR,  
+            r.rtnName, 
+            COUNT(*) AS frequency,
+            ROUND(SUM(
+                IIF(e.dtTS7DownFinish IS NOT NULL, 
+                    (e.dtTS7DownFinish - e.dtTS1DownBegin) * 24, 
+                    (Now() - e.dtTS1DownBegin) * 24
+                )
+            ), 2) AS total_downtime_hrs
+        FROM 
+            ((((tblEvent AS e
+            INNER JOIN tblFacility AS f ON e.facID = f.facID)
+            INNER JOIN tblAsset AS a ON e.astID = a.astID)
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+            LEFT JOIN tblReason as rr ON e.rsnID = rr.rsnID)
+            LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
+        WHERE 
+            e.dtTS1DownBegin BETWEEN ? AND ?
+            AND r.rtnName NOT IN ('Fault', 'IDF Outage', 'Other', 'IDF Fault')
+            AND rr.rsnName <> 'Communication loss'
+            AND n.evntntNote <> 'DELETED'
+        GROUP BY
+            f.facABBR, r.rtnName
+        ORDER BY 
+            f.facABBR ASC,
+            COUNT(*) DESC
+        """,
+        (start_dt, end_dt)
+    )
+
+    rows = cursor.fetchall()
+    result = [
+        {
+            "wind_farm": row[0],
+            "rationale": row[1],
+            "count": row[2],
+            "total_downtime_hrs": row[3]
+        } 
+        for row in rows
+    ]
+
+    return {"serviceAnalysisDataSet": result}
+
+
