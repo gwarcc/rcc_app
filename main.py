@@ -1184,8 +1184,8 @@ async def get_production_analysis(
     dt2_start = parse_date(startdate2)
     dt2_end = parse_date(enddate2)
 
-    result1 = run_queries(dt1_start, dt1_end, 1)
-    result2 = run_queries(dt2_start, dt2_end, 2)
+    result1 = run_queries(dt1_start, dt1_end, 'Period 1')
+    result2 = run_queries(dt2_start, dt2_end, 'Period 2')
 
     return {"productionAnalysisDataSet": result1 + result2}
 
@@ -1197,7 +1197,7 @@ def get_schedule_service_analysis(
     enddate2: str = Query(..., description="End date for Period 2 (YYYY-MM-DD)"),
     db: pyodbc.Connection = Depends(get_db_access)
 ):
-    def run_query(start, end):
+    def run_query(start, end, period):
         try:
             start_dt = datetime.strptime(start, "%Y-%m-%d")
             end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
@@ -1257,11 +1257,12 @@ def get_schedule_service_analysis(
                 "wind_farm": row[0],
                 "wtg": row[1],
                 "count": row[2],
-                "total_downtime_hrs": row[3]
+                "total_downtime_hrs": row[3],
+                "period": period
             })
         return result
 
-    results = run_query(startdate1, enddate1) + run_query(startdate2, enddate2)
+    results = run_query(startdate1, enddate1, 'period 1') + run_query(startdate2, enddate2, 'period 2')
 
     return {
         "scheduledserviceAnalysisDataSet": results
@@ -1275,7 +1276,7 @@ def get_service_analysis(
     enddate2: str = Query(..., description="End date for Period 2 (YYYY-MM-DD)"),
     db: pyodbc.Connection = Depends(get_db_access)
 ):
-    def run_query(start, end):
+    def run_query(start, end, period):
         try:
             start_dt = datetime.strptime(start, "%Y-%m-%d")
             end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
@@ -1335,12 +1336,13 @@ def get_service_analysis(
                 "wind_farm": row[0],
                 "rationale": row[1],
                 "count": row[2],
-                "total_downtime_hrs": row[3]
+                "total_downtime_hrs": row[3],
+                "period": period
             })
         return result
 
     # Run queries for both date ranges and merge the results
-    results = run_query(startdate1, enddate1) + run_query(startdate2, enddate2)
+    results = run_query(startdate1, enddate1, 'period 1') + run_query(startdate2, enddate2, 'period 2')
 
     # Now, combine the results by week_number, wind_farm, and rationale
     combined_results = {}
@@ -1353,7 +1355,8 @@ def get_service_analysis(
                 "wind_farm": entry["wind_farm"],
                 "rationale": entry["rationale"],
                 "count": 0,
-                "total_downtime_hrs": 0.0
+                "total_downtime_hrs": 0.0,
+                "period": entry["period"],
             }
 
         # Combine the count and downtime values for matching entries
