@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from rcc_app import models, schemas, crud
 from collections import defaultdict
 from .database import engine, Base, get_db, get_db_access, get_db_prod_stats
-from datetime import datetime,timedelta
+from datetime import datetime,timedelta,time 
 import pyodbc
 import socket
 import sys
@@ -80,7 +80,6 @@ def login(login_data: schemas.Login, request: Request, db: Session = Depends(get
 
     return {"message": "Login successful", "user": {"id": user.usrid, "name": user.usrnamedisplay}}
 
-
 # fetching users from postgre
 @app.get("/user/{user_id}")
 def get_user_info(user_id: int, db: Session = Depends(get_db)):
@@ -91,7 +90,6 @@ def get_user_info(user_id: int, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return {"id": user.usrid, "name": user.usrnamedisplay}
-
 
 # reading offline wtgs from microsoft access DB
 @app.get("/offline_wtgs")
@@ -183,7 +181,6 @@ async def get_services(
     data = [dict(zip(columns, row)) for row in rows]
 
     return {"servicesDataSet": data}
-
 
 # reading fault events from microsoft access DB
 @app.get("/get_faults")
@@ -309,7 +306,6 @@ async def get_idf(
 
     return {"idfDataSet": data}
 
-
 # reading from excel (raw data 2025)
 @app.get("/read-excel/", response_model=List[models.ExcelRow])
 async def read_excel():
@@ -335,9 +331,6 @@ async def read_excel():
 
     return rows
     
-
-
-
 @app.get("/summary_stoppages")
 def get_summary_stoppages(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
@@ -417,7 +410,6 @@ def get_summary_stoppages(
 
     return result
 
-
 @app.get("/stoppage_legend")
 def get_stoppage_legend(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
@@ -476,7 +468,6 @@ def get_stoppage_legend(
     result.sort(key=lambda x: x["count"], reverse=True)
 
     return result
-
 
 @app.get("/stoppage_headings")
 def get_stoppage_legend(
@@ -784,7 +775,6 @@ def get_idf_faults_heading(
 
     return result
 
-
 # get stoppages for any wind farm
 @app.get("/get_stoppages_for_wf")
 async def get_services(
@@ -855,7 +845,6 @@ async def get_services(
     data = [dict(zip(columns, row)) for row in rows]
 
     return {"stoppagesDataSet": data}
-
 
 # reading offline wtgs for any wind farm
 @app.get("/offline_wtgs_for_wf")
@@ -1066,7 +1055,6 @@ def get_top_ten_faults(
         "period1": period1_results,
         "period2": period2_results
     }
-
 
 @app.get("/prod_stats_by_site")
 def get_prod_stats_by_site(
@@ -1369,3 +1357,97 @@ def get_service_analysis(
     return {
         "serviceAnalysisDataSet": final_results
     }
+
+@app.get("/overnight_rcc_resets")
+async def get_overnight_rcc_resets(
+    startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access),
+    db_prod: pyodbc.Connection = Depends(get_db_prod_stats),
+):
+    cursor = db.cursor()
+    prod_cursor = db_prod.cursor()
+
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+
+    cursor.execute(
+        """
+        SELECT 
+            f.facABBR AS WindFarm,
+            a.astDisplay AS WTG,
+            fa.fltCode AS AlarmCode,
+            fa.fltDesc AS AlarmDescription,
+            e.dtTS1DownBegin AS StopTime,               
+            e.dtTS7DownFinish AS StartTime,             
+            ROUND((IIF(e.dtTS1DownBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL, 
+                   (e.dtTS7DownFinish - e.dtTS1DownBegin) * 24, NULL)), 2) AS DowntimeHrs,
+            rrt.rsttypName AS ResetType,
+            n.evntntNote AS Remarks,
+            a.astID
+        FROM 
+            ((((tblEvent AS e
+            INNER JOIN tblFacility AS f ON e.facID = f.facID)
+            INNER JOIN tblAsset AS a ON e.astID = a.astID)
+            INNER JOIN tblFaultCode AS fa ON e.fltID = fa.fltID)
+            LEFT JOIN tblRCCResetType AS rrt ON e.rsttypID = rrt.rsttypID)
+            LEFT JOIN tblEventNotes AS n ON e.evntID = n.evntID
+        WHERE 
+            e.fltID IS NOT NULL AND
+            e.rstbyID = 2 AND
+            e.dtTS1DownBegin BETWEEN ? AND ?
+        ORDER BY 
+            e.dtTS1DownBegin DESC
+        """,
+        (start_dt, end_dt)
+    )
+
+    rows = cursor.fetchall()
+    columns = [col[0] for col in cursor.description]
+
+    results = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+
+        stop_time = row_dict["StopTime"]
+        start_time = row_dict["StartTime"]
+        ast_id = row_dict["astID"]
+        stop_date = stop_time.date()
+
+        # 🕖 Overnight window: 7 PM (previous day) to 7 AM (current day)
+        overnight_start = datetime.combine(stop_date, time(19, 0)) - timedelta(days=1)
+        overnight_end = datetime.combine(stop_date, time(7, 0))
+
+        # Skip if not in overnight range
+        if not (overnight_start <= stop_time <= overnight_end):
+            continue
+
+        # ⏱ Calculate saved time
+        saved_time_hrs = max(0, (overnight_end - start_time).total_seconds() / 3600)
+
+        # ⚡ Fetch daily energy from tblStatsProd (Access)
+        prod_cursor.execute(
+            """
+            SELECT spActEnergyExport FROM tblStatsProd
+            WHERE astID = ? AND spDate = ?
+            """,
+            ast_id, stop_date
+        )
+        prod_row = prod_cursor.fetchone()
+        daily_energy_kwh = prod_row[0] if prod_row else 0
+        daily_energy_mwh = daily_energy_kwh / 1000  # Convert to MWh
+        saved_energy = round((daily_energy_mwh / 24) * saved_time_hrs, 3)
+
+        # 🧾 Append result row
+        row_dict["SavedTimeHrs"] = round(saved_time_hrs, 2)
+        row_dict["SavedEnergyMWh"] = saved_energy
+
+        # Remove internal ID
+        del row_dict["astID"]
+
+        results.append(row_dict)
+
+    return {"overnightResetsDataSet": results}
