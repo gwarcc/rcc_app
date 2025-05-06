@@ -517,7 +517,9 @@ async def get_services(
     cursor.execute(
         """
         SELECT 
-            e.dtTS1DownBegin, 
+            e.dtTS1DownBegin,  
+            e.dtTS7DownFinish,
+            ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs,
             f.facABBR, 
             a.astDisplay, 
             r.rtnName, 
@@ -586,8 +588,7 @@ def get_faults_details(
         INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID
         WHERE 
             r.rtnName = 'Fault' AND
-            e.dtTS1DownBegin BETWEEN ? AND ? AND
-            e.dtTS7DownFinish IS NOT NULL
+            e.dtTS1DownBegin BETWEEN ? AND ?
         """,
         (start_dt, end_dt)
     )
@@ -651,8 +652,7 @@ async def get_faults(
             LEFT JOIN tblEventNotes AS n ON e.evntID = n.evntID
         WHERE 
             e.fltID IS NOT NULL AND
-            e.dtTS1DownBegin BETWEEN ? AND ? AND
-            e.dtTS7DownFinish IS NOT NULL
+            e.dtTS1DownBegin BETWEEN ? AND ? 
         ORDER BY 
             f.facABBR ASC,
             a.astDisplay ASC,
@@ -1109,14 +1109,15 @@ def get_schedule_service_analysis(
             end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format")
-        
+
         cursor = db.cursor()
         cursor.execute(
             """
             SELECT  
                 f.facABBR,
                 a.astDisplay,  
-                COUNT(*) AS frequency,
+                r.rtnName,
+                rr.rsnName,
                 ROUND(SUM(
                     IIF(e.dtTS7DownFinish IS NOT NULL, 
                         (e.dtTS7DownFinish - e.dtTS1DownBegin) * 24, 
@@ -1137,38 +1138,62 @@ def get_schedule_service_analysis(
                 AND rr.rsnName <> 'Communication loss'
                 AND n.evntntNote <> 'DELETED'
             GROUP BY
-                f.facABBR, a.astDisplay, r.rtnName, e.dtTS1DownBegin
+                f.facABBR, a.astDisplay, r.rtnName, rr.rsnName, e.dtTS1DownBegin
             ORDER BY 
-                e.dtTS1DownBegin ASC,
-                f.facABBR ASC,
-                COUNT(*) DESC
+                f.facABBR ASC
             """,
             (start_dt, end_dt)
         )
 
-        rows = cursor.fetchall()
-        result = []
-        for row in rows:
-            down_begin = row[4]
+        temp_data = defaultdict(lambda: {
+            "count": 0,
+            "total_downtime_hrs": 0.0,
+            "week_number": None
+        })
+
+        for row in cursor.fetchall():
+            wind_farm = row[0]
+            wtg = row[1]
+            rtn_name = row[2]
+            rsn_name = row[3]
+            downtime = float(row[4]) if row[4] is not None else 0.0
+            down_begin = row[5]
+
             try:
-                # Ensure it's a datetime object
                 if isinstance(down_begin, str):
                     down_begin = datetime.fromisoformat(down_begin)
                 week_number = down_begin.isocalendar().week
             except Exception:
-                week_number = None  # fallback if parsing fails
+                week_number = None
+
+            key = (period, wind_farm, wtg, rtn_name, rsn_name)
+            temp_data[key]["count"] += 1
+            temp_data[key]["total_downtime_hrs"] += downtime
+            temp_data[key]["week_number"] = week_number
+
+        result = []
+        for (period, wind_farm, wtg, rtn_name, rsn_name), values in temp_data.items():
+            count = values["count"]
+            total_downtime = values["total_downtime_hrs"]
+            avg_downtime = round(total_downtime / count, 2) if count > 0 else 0.0
 
             result.append({
-                "week_number": week_number,
-                "wind_farm": row[0],
-                "wtg": row[1],
-                "count": row[2],
-                "total_downtime_hrs": row[3],
-                "period": period
+                "period": period,
+                "wind_farm": wind_farm,
+                "rtn_name": rtn_name,
+                "rsn_name": rsn_name,
+                "wtg": wtg,
+                "count": count,
+                "avg_downtime_hrs": avg_downtime,
+                "total_downtime_hrs": round(total_downtime, 2),
+                "week_number": values["week_number"]
             })
+
         return result
 
     results = run_query(startdate1, enddate1, 'period 1') + run_query(startdate2, enddate2, 'period 2')
+    results.sort(key=lambda x: (x["wind_farm"], x["wtg"], x["rtn_name"], x["rsn_name"]))  # Sort by wind farm and more
+
 
     return {
         "scheduledserviceAnalysisDataSet": results
@@ -1219,7 +1244,6 @@ def get_service_analysis(
             GROUP BY
                 f.facABBR, r.rtnName, e.dtTS1DownBegin
             ORDER BY 
-                e.dtTS1DownBegin ASC,
                 f.facABBR ASC,
                 COUNT(*) DESC
             """,
@@ -1272,6 +1296,8 @@ def get_service_analysis(
 
     # Convert the combined results back into a list
     final_results = list(combined_results.values())
+    final_results.sort(key=lambda x: (x["wind_farm"], x["rationale"]))  # Sort by wind_farm, then rationale
+
 
     return {
         "serviceAnalysisDataSet": final_results
