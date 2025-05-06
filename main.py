@@ -572,24 +572,25 @@ def get_faults_details(
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
     cursor.execute(
-        """
-        SELECT 
-            COUNT(*) AS total_faults,
+         """
+            SELECT 
+                COUNT(*) AS total_faults,
 
-            COUNT(IIf(e.rstbyID = 2, 1, NULL)) AS reset_by_rcc,
+                COUNT(IIf(e.rstbyID = 2, 1, NULL)) AS reset_by_rcc,
 
-            AVG(IIf(e.dtTS7DownFinish IS NOT NULL AND e.dtTS1DownBegin IS NOT NULL,
-                DateDiff('s', e.dtTS1DownBegin, e.dtTS7DownFinish), NULL)) / 3600.0 AS avg_downtime_hrs,
+                AVG(IIf(e.dtTS7DownFinish IS NOT NULL AND e.dtTS1DownBegin IS NOT NULL,
+                    DateDiff('s', e.dtTS1DownBegin, e.dtTS7DownFinish), NULL)) / 3600.0 AS avg_downtime_hrs,
 
-            AVG(IIf(e.dtTS2RCCNotify IS NOT NULL AND e.dtTS1DownBegin IS NOT NULL,
-                DateDiff('s', e.dtTS1DownBegin, e.dtTS2RCCNotify), NULL)) / 60.0 AS avg_rcc_response_mins
+                AVG(IIf(e.dtTS2RCCNotify IS NOT NULL AND e.dtTS1DownBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL,
+                    DateDiff('s', e.dtTS1DownBegin, e.dtTS2RCCNotify), NULL)) / 60.0 AS avg_rcc_response_mins
 
-        FROM tblEvent AS e
-        INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID
-        WHERE 
-            r.rtnName = 'Fault' AND
-            e.dtTS1DownBegin BETWEEN ? AND ?
-        """,
+            FROM tblEvent AS e
+            INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID
+            WHERE 
+                r.rtnName = 'Fault' AND
+                e.dtTS1DownBegin BETWEEN ? AND ? AND
+                e.dtTS7DownFinish IS NOT NULL
+            """,
         (start_dt, end_dt)
     )
 
@@ -652,7 +653,8 @@ async def get_faults(
             LEFT JOIN tblEventNotes AS n ON e.evntID = n.evntID
         WHERE 
             e.fltID IS NOT NULL AND
-            e.dtTS1DownBegin BETWEEN ? AND ? 
+            e.dtTS1DownBegin BETWEEN ? AND ? AND
+            e.dtTS7DownFinish IS NOT NULL
         ORDER BY 
             f.facABBR ASC,
             a.astDisplay ASC,
