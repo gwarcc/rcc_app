@@ -354,7 +354,7 @@ def get_rcc_response_time(
 
     return {"avg_response_hrs": result}
 
-#Offline Asser heading
+#Offline Asset heading
 @app.get("/offline_headings")
 def get_stoppage_legend(
     db: pyodbc.Connection = Depends(get_db_access)
@@ -409,10 +409,10 @@ def get_offline_wtgs(db: pyodbc.Connection = Depends(get_db_access)):
             LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
         WHERE 
             e.dtTS7EventFinish IS NULL
-        ORDER BY 
-            e.dtTS1DownBegin DESC,
+        ORDER BY  
             f.facABBR ASC,
-            a.astDisplay DESC;
+            a.astDisplay ASC,
+            e.dtTS1DownBegin DESC;
         """
         )  # Modify with your actual query
     rows = cursor.fetchall()
@@ -809,7 +809,9 @@ async def get_overnight_rcc_resets(
             e.rstbyID = 2 AND
             e.dtTS1DownBegin BETWEEN ? AND ?
         ORDER BY 
-            e.dtTS1DownBegin DESC
+            f.facABBR ASC,
+            a.astDisplay ASC,
+            e.dtTS1DownBegin DESC;
         """,
         (query_start, query_end)
     )
