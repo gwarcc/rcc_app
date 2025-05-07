@@ -1136,7 +1136,7 @@ def get_schedule_service_analysis(
                 LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
             WHERE 
                 e.dtTS1DownBegin BETWEEN ? AND ?
-                AND r.rtnName IN ('Schedule Service', 'Schedule Outage')
+                AND r.rtnName = 'Schedule Service'
                 AND rr.rsnName <> 'Communication loss'
                 AND n.evntntNote <> 'DELETED'
             GROUP BY
