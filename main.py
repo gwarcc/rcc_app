@@ -1013,7 +1013,7 @@ async def get_idf(
     return {"idfDataSet": data}
 
 
-#Analysis Report
+#----------------------------------------------Analysis Report ------------------------------------------------------------------
 # Power Production Analysis
 @app.get("/get_production_analysis")
 async def get_production_analysis(
@@ -1551,6 +1551,86 @@ async def get_services(
     data = [dict(zip(columns, row)) for row in rows]
 
     return {"stoppagesDataSet": data}
+
+#get idf for analysis
+@app.get("/get_idf_analysis")
+async def get_idf_analysis(
+    startdate1: str = Query(..., description="Start date for Period 1 (YYYY-MM-DD)"),
+    enddate1: str = Query(..., description="End date for Period 1 (YYYY-MM-DD)"),
+    startdate2: str = Query(..., description="Start date for Period 2 (YYYY-MM-DD)"),
+    enddate2: str = Query(..., description="End date for Period 2 (YYYY-MM-DD)"),
+    db: pyodbc.Connection = Depends(get_db_access)
+):
+    def run_query(start, end, period):
+        try:
+            start_dt = datetime.strptime(start, "%Y-%m-%d")
+            end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format")
+
+        cursor = db.cursor()
+        cursor.execute(
+            """
+            SELECT 
+                e.dtTS1DownBegin, 
+                f.facABBR, 
+                a.astDisplay, 
+                r.rtnName, 
+                s.stpStopDesc,
+                ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) AS DowntimeHrs,
+                rb.rstbyName,
+                ROUND((IIF(e.dtTS2RCCNotify IS NOT NULL, e.dtTS2RCCNotify, Now()) - e.dtTS1DownBegin) * 24 * 60, 2) AS ResponseTimeMins,
+                ROUND(
+                    IIF(
+                        r.rtnName = 'IDF Fault' AND 
+                        s.stpStopCode = 102 AND 
+                        e.rstbyID = 2 AND 
+                        ((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24) < 2,
+                        2 - ((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24),
+                        NULL
+                    ),
+                    2
+                ) AS IDFFaultTimeSaving,
+                n.evntntNote
+            FROM 
+                ((((((tblEvent AS e
+                INNER JOIN tblFacility AS f ON e.facID = f.facID)
+                INNER JOIN tblAsset AS a ON e.astID = a.astID)
+                INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
+                INNER JOIN tblReason as rr ON e.rsnID = rr.rsnID)
+                INNER JOIN tblStopCodes as s ON e.stpID = s.stpID)
+                INNER JOIN tblRCCResetBy as rb ON e.rstbyID = rb.rstbyID)
+                LEFT JOIN tblEventNotes as n ON e.evntID = n.evntID
+            WHERE 
+                e.dtTS1DownBegin BETWEEN ? AND ?
+                AND (r.rtnName = 'IDF Fault' OR rr.rsnName = 'IDF fault')
+                AND n.evntntNote <> 'DELETED'
+            ORDER BY 
+                a.astDisplay DESC;
+            """,
+            (start_dt, end_dt)
+        )
+
+        rows = cursor.fetchall()
+        columns = [column[0] for column in cursor.description]
+        data = [dict(zip(columns, row)) for row in rows]
+
+        # Add period to each entry
+        for entry in data:
+            entry["period"] = period
+
+        return data
+
+    # Run queries for both date ranges and merge the results
+    period1_data = run_query(startdate1, enddate1, 'period 1')
+    period2_data = run_query(startdate2, enddate2, 'period 2')
+
+    # Combine the data from both periods
+    combined_data = period1_data + period2_data
+
+    return {"idfAnalysisDataSet": combined_data}
+
+
 
 # reading from excel (raw data 2025)
 # @app.get("/read-excel/", response_model=List[models.ExcelRow])
