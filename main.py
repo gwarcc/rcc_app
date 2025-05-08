@@ -305,6 +305,110 @@ def get_stoppage_legend(
 
     return result
 
+@app.get("/overnight_rcc_resets")
+async def get_overnight_rcc_resets(
+    startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_access),
+    db_prod: pyodbc.Connection = Depends(get_db_prod_stats),
+):
+    cursor = db.cursor()
+    prod_cursor = db_prod.cursor()
+
+    try:
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d")
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+
+    overnight_start = datetime.combine(start_dt, time(19, 0))
+    overnight_end = datetime.combine(end_dt, time(7, 0))
+
+    if overnight_end <= overnight_start:
+        overnight_end += timedelta(days=1)
+
+    cursor.execute(
+        """
+        SELECT 
+            f.facABBR AS WindFarm,
+            a.astDisplay AS WTG,
+            fa.fltCode AS AlarmCode,
+            fa.fltDesc AS AlarmDescription,
+            e.dtTS1DownBegin AS StopTime,               
+            e.dtTS7DownFinish AS StartTime,             
+            ROUND((IIF(e.dtTS1DownBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL, 
+                   (e.dtTS7DownFinish - e.dtTS1DownBegin) * 24, NULL)), 2) AS DowntimeHrs,
+            rrt.rsttypName AS ResetType,
+            n.evntntNote AS Remarks,
+            a.astID
+        FROM 
+            ((((tblEvent AS e
+            INNER JOIN tblFacility AS f ON e.facID = f.facID)
+            INNER JOIN tblAsset AS a ON e.astID = a.astID)
+            INNER JOIN tblFaultCode AS fa ON e.fltID = fa.fltID)
+            LEFT JOIN tblRCCResetType AS rrt ON e.rsttypID = rrt.rsttypID)
+            LEFT JOIN tblEventNotes AS n ON e.evntID = n.evntID
+        WHERE 
+            e.fltID IS NOT NULL AND
+            e.rstbyID = 2 AND
+            e.dtTS1DownBegin BETWEEN ? AND ?
+        ORDER BY 
+            f.facABBR ASC,
+            a.astDisplay ASC,
+            e.dtTS1DownBegin DESC;
+        """,
+        (overnight_start, overnight_end)
+    )
+
+    rows = cursor.fetchall()
+    columns = [col[0] for col in cursor.description]
+
+    def daterange(start_date: datetime, end_date: datetime) -> Generator[datetime, None, None]:
+        for n in range((end_date - start_date).days + 1):
+            yield start_date + timedelta(n)
+
+    results = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+
+        stop_time = row_dict["StopTime"]
+        start_time = row_dict["StartTime"]
+        ast_id = row_dict["astID"]
+
+        matched = False
+        for d in daterange(start_dt, end_dt):
+            overnight_start = datetime.combine(d - timedelta(days=1), time(19, 0))  
+            overnight_end = datetime.combine(d, time(7, 0)) 
+
+            if overnight_start <= stop_time <= overnight_end:
+                matched = True
+                break  
+
+        if not matched:
+            continue 
+
+        saved_time_hrs = max(0, (overnight_end - start_time).total_seconds() / 3600)
+
+        prod_cursor.execute(
+            """
+            SELECT spActEnergyExport FROM tblStatsProd
+            WHERE astID = ? AND spDate = ?
+            """,
+            ast_id, d.date()  
+        )
+        prod_row = prod_cursor.fetchone()
+        daily_energy_kwh = prod_row[0] if prod_row else 0
+        daily_energy_mwh = daily_energy_kwh / 1000
+        saved_energy = round((daily_energy_mwh / 24) * saved_time_hrs, 3)
+
+        row_dict["SavedTimeHrs"] = round(saved_time_hrs, 2)
+        row_dict["SavedEnergyMWh"] = saved_energy
+        del row_dict["astID"]
+
+        results.append(row_dict)
+
+    return {"overnightResetsDataSet": results}
+
 # Average RCC response time for faults
 @app.get("/get_rcc_response_time")
 def get_rcc_response_time(
@@ -674,201 +778,6 @@ async def get_faults(
     data = [dict(zip(columns, row)) for row in rows]
 
     return {"faultsDataSet": data}
-
-# @app.get("/overnight_rcc_resets")
-# async def get_overnight_rcc_resets(
-#     startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
-#     enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
-#     db: pyodbc.Connection = Depends(get_db_access),
-#     db_prod: pyodbc.Connection = Depends(get_db_prod_stats),
-# ):
-#     cursor = db.cursor()
-#     prod_cursor = db_prod.cursor()
-
-#     try:
-#         start_dt = datetime.strptime(startdate, "%Y-%m-%d")
-#         end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
-#     except ValueError:
-#         return {"error": "Invalid date format. Use YYYY-MM-DD"}
-
-#     cursor.execute(
-#         """
-#         SELECT 
-#             f.facABBR AS WindFarm,
-#             a.astDisplay AS WTG,
-#             fa.fltCode AS AlarmCode,
-#             fa.fltDesc AS AlarmDescription,
-#             e.dtTS1DownBegin AS StopTime,               
-#             e.dtTS7DownFinish AS StartTime,             
-#             ROUND((IIF(e.dtTS1DownBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL, 
-#                    (e.dtTS7DownFinish - e.dtTS1DownBegin) * 24, NULL)), 2) AS DowntimeHrs,
-#             rrt.rsttypName AS ResetType,
-#             n.evntntNote AS Remarks,
-#             a.astID
-#         FROM 
-#             ((((tblEvent AS e
-#             INNER JOIN tblFacility AS f ON e.facID = f.facID)
-#             INNER JOIN tblAsset AS a ON e.astID = a.astID)
-#             INNER JOIN tblFaultCode AS fa ON e.fltID = fa.fltID)
-#             LEFT JOIN tblRCCResetType AS rrt ON e.rsttypID = rrt.rsttypID)
-#             LEFT JOIN tblEventNotes AS n ON e.evntID = n.evntID
-#         WHERE 
-#             e.fltID IS NOT NULL AND
-#             e.rstbyID = 2 AND
-#             e.dtTS1DownBegin BETWEEN ? AND ?
-#         ORDER BY 
-#             e.dtTS1DownBegin DESC
-#         """,
-#         (start_dt, end_dt)
-#     )
-
-#     rows = cursor.fetchall()
-#     columns = [col[0] for col in cursor.description]
-
-#     results = []
-#     for row in rows:
-#         row_dict = dict(zip(columns, row))
-
-#         stop_time = row_dict["StopTime"]
-#         start_time = row_dict["StartTime"]
-#         ast_id = row_dict["astID"]
-#         stop_date = stop_time.date()
-
-#         # 🕖 Overnight window: 7 PM (previous day) to 7 AM (current day)
-#         overnight_start = datetime.combine(stop_date, time(19, 0)) - timedelta(days=1)
-#         overnight_end = datetime.combine(stop_date, time(7, 0))
-
-#         # Skip if not in overnight range
-#         if not (overnight_start <= stop_time <= overnight_end):
-#             continue
-
-#         # ⏱ Calculate saved time
-#         saved_time_hrs = max(0, (overnight_end - start_time).total_seconds() / 3600)
-
-#         # ⚡ Fetch daily energy from tblStatsProd (Access)
-#         prod_cursor.execute(
-#             """
-#             SELECT spActEnergyExport FROM tblStatsProd
-#             WHERE astID = ? AND spDate = ?
-#             """,
-#             ast_id, stop_date
-#         )
-#         prod_row = prod_cursor.fetchone()
-#         daily_energy_kwh = prod_row[0] if prod_row else 0
-#         daily_energy_mwh = daily_energy_kwh / 1000  # Convert to MWh
-#         saved_energy = round((daily_energy_mwh / 24) * saved_time_hrs, 3)
-
-#         # 🧾 Append result row
-#         row_dict["SavedTimeHrs"] = round(saved_time_hrs, 2)
-#         row_dict["SavedEnergyMWh"] = saved_energy
-
-#         # Remove internal ID
-#         del row_dict["astID"]
-
-#         results.append(row_dict)
-
-#     return {"overnightResetsDataSet": results}
-
-@app.get("/overnight_rcc_resets")
-async def get_overnight_rcc_resets(
-    startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
-    enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
-    db: pyodbc.Connection = Depends(get_db_access),
-    db_prod: pyodbc.Connection = Depends(get_db_prod_stats),
-):
-    cursor = db.cursor()
-    prod_cursor = db_prod.cursor()
-
-    try:
-        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
-        end_dt = datetime.strptime(enddate, "%Y-%m-%d")
-    except ValueError:
-        return {"error": "Invalid date format. Use YYYY-MM-DD"}
-
-    query_start = start_dt - timedelta(days=1)
-    query_end = end_dt + timedelta(days=1)
-
-    cursor.execute(
-        """
-        SELECT 
-            f.facABBR AS WindFarm,
-            a.astDisplay AS WTG,
-            fa.fltCode AS AlarmCode,
-            fa.fltDesc AS AlarmDescription,
-            e.dtTS1DownBegin AS StopTime,               
-            e.dtTS7DownFinish AS StartTime,             
-            ROUND((IIF(e.dtTS1DownBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL, 
-                   (e.dtTS7DownFinish - e.dtTS1DownBegin) * 24, NULL)), 2) AS DowntimeHrs,
-            rrt.rsttypName AS ResetType,
-            n.evntntNote AS Remarks,
-            a.astID
-        FROM 
-            ((((tblEvent AS e
-            INNER JOIN tblFacility AS f ON e.facID = f.facID)
-            INNER JOIN tblAsset AS a ON e.astID = a.astID)
-            INNER JOIN tblFaultCode AS fa ON e.fltID = fa.fltID)
-            LEFT JOIN tblRCCResetType AS rrt ON e.rsttypID = rrt.rsttypID)
-            LEFT JOIN tblEventNotes AS n ON e.evntID = n.evntID
-        WHERE 
-            e.fltID IS NOT NULL AND
-            e.rstbyID = 2 AND
-            e.dtTS1DownBegin BETWEEN ? AND ?
-        ORDER BY 
-            f.facABBR ASC,
-            a.astDisplay ASC,
-            e.dtTS1DownBegin DESC;
-        """,
-        (query_start, query_end)
-    )
-
-    rows = cursor.fetchall()
-    columns = [col[0] for col in cursor.description]
-
-    def daterange(start_date: datetime, end_date: datetime) -> Generator[datetime, None, None]:
-        for n in range((end_date - start_date).days + 1):
-            yield start_date + timedelta(n)
-
-    results = []
-    for row in rows:
-        row_dict = dict(zip(columns, row))
-
-        stop_time = row_dict["StopTime"]
-        start_time = row_dict["StartTime"]
-        ast_id = row_dict["astID"]
-
-        matched = False
-        for d in daterange(start_dt, end_dt):
-            overnight_start = datetime.combine(d - timedelta(days=1), time(19, 0))  
-            overnight_end = datetime.combine(d, time(7, 0)) 
-
-            if overnight_start <= stop_time <= overnight_end:
-                matched = True
-                break  
-
-        if not matched:
-            continue 
-
-        saved_time_hrs = max(0, (overnight_end - start_time).total_seconds() / 3600)
-
-        prod_cursor.execute(
-            """
-            SELECT spActEnergyExport FROM tblStatsProd
-            WHERE astID = ? AND spDate = ?
-            """,
-            ast_id, d.date()  
-        )
-        prod_row = prod_cursor.fetchone()
-        daily_energy_kwh = prod_row[0] if prod_row else 0
-        daily_energy_mwh = daily_energy_kwh / 1000
-        saved_energy = round((daily_energy_mwh / 24) * saved_time_hrs, 3)
-
-        row_dict["SavedTimeHrs"] = round(saved_time_hrs, 2)
-        row_dict["SavedEnergyMWh"] = saved_energy
-        del row_dict["astID"]
-
-        results.append(row_dict)
-
-    return {"overnightResetsDataSet": results}
 
 @app.get("/idf_faults_heading")
 def get_idf_faults_heading(
