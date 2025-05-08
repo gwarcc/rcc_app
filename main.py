@@ -203,6 +203,8 @@ def get_summary_stoppages(
         cat = row.category.strip().lower() if row.category else ""
         summary[wf]["Total Stops"] += 1
 
+        is_fault = cat in ["fault", "idf fault"]
+
         if cat == "schedule service":
             summary[wf]["Scheduled Services"] += 1
         elif cat in ["fault", "idf fault"]:
@@ -210,13 +212,14 @@ def get_summary_stoppages(
         else:
             summary[wf]["Non Scheduled Services"] += 1
 
-        if row.start_time and row.stop_time:
-            dt = (row.start_time - row.stop_time).total_seconds() / 3600
-            downtime_data[wf].append(dt)
+        if not is_fault:
+            if row.start_time and row.stop_time:
+                dt = (row.start_time - row.stop_time).total_seconds() / 3600
+                downtime_data[wf].append(dt)
 
-        if row.maint_time and row.start_time:
-            mt = (row.start_time - row.maint_time).total_seconds() / 3600
-            service_data[wf].append(mt)
+            if row.maint_time and row.start_time:
+                mt = (row.start_time - row.maint_time).total_seconds() / 3600
+                service_data[wf].append(mt)
 
     result = {
         "stoppages": [],
@@ -231,7 +234,7 @@ def get_summary_stoppages(
                 "count": count
             })
 
-    for wf in set(downtime_data.keys()).union(service_data.keys()):
+    for wf in summary.keys():
         avg_down = round(sum(downtime_data[wf]) / len(downtime_data[wf]), 2) if downtime_data[wf] else 0
         avg_service = round(sum(service_data[wf]) / len(service_data[wf]), 2) if service_data[wf] else 0
         result["avg_hours"].append({
