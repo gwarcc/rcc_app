@@ -1484,7 +1484,8 @@ async def get_idf_analysis(
         cursor.execute(
             """
             SELECT 
-                e.dtTS1DownBegin, 
+                e.dtTS1DownBegin,              
+                e.dtTS7DownFinish,
                 f.facABBR, 
                 a.astDisplay, 
                 r.rtnName, 
