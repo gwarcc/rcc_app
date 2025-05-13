@@ -203,7 +203,7 @@ def get_summary_stoppages(
         cat = row.category.strip().lower() if row.category else ""
         summary[wf]["Total Stops"] += 1
 
-        is_fault = cat in ["fault", "idf fault"]
+        is_fault = cat in ["fault", "idf fault", "idf outage", "schedule outage"]
 
         if cat == "schedule service":
             summary[wf]["Scheduled Services"] += 1
@@ -213,7 +213,7 @@ def get_summary_stoppages(
             summary[wf]["Non Scheduled Services"] += 1
 
         if not is_fault:
-            if row.start_time and row.stop_time and row.start_time != row.maint_time:#only show the downtime with service time
+            if row.start_time and row.stop_time:
                 dt = (row.start_time - row.stop_time).total_seconds() / 3600
                 downtime_data[wf].append(dt)
 
