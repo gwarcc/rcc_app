@@ -9,11 +9,9 @@ import pyodbc
 import socket
 import sys
 import os
-
 from openpyxl import load_workbook
 from typing import List, Generator
 from collections import defaultdict
-
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -31,7 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# LOGIN
+# LOGIN API
 @app.post("/login/")
 def login(login_data: schemas.Login, request: Request, db: Session = Depends(get_db)):
     # Get the IP address of the client
@@ -80,7 +78,7 @@ def login(login_data: schemas.Login, request: Request, db: Session = Depends(get
 
     return {"message": "Login successful", "user": {"id": user.usrid, "name": user.usrnamedisplay}}
 
-# fetching users from postgre
+# FETCH USER ACCOUNT API
 @app.get("/user/{user_id}")
 def get_user_info(user_id: int, db: Session = Depends(get_db)):
     """
@@ -91,10 +89,10 @@ def get_user_info(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     return {"id": user.usrid, "name": user.usrnamedisplay}
 
-#REPORTS
-#RCC Reports --------------------
-#Summary Report 
-# offline wtgs heading
+
+#----------------------------------------------Summary Report ------------------------------------------------------------------
+
+#FETCH STOPPAGE SUMMARY DATA FOR HEADING API
 @app.get("/stoppage_headings")
 def get_stoppage_legend(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
@@ -162,7 +160,7 @@ def get_stoppage_legend(
 
     return result
 
-# 2 charts
+#FETCH STOPPAGE SUMMARY DATA API
 @app.get("/summary_stoppages")
 def get_summary_stoppages(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
@@ -245,7 +243,7 @@ def get_summary_stoppages(
 
     return result
 
-#legend of stoppage
+#FETCH STOPPAGE SUMMARY FOR LEGEND SECTION API
 @app.get("/stoppage_legend")
 def get_stoppage_legend(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
@@ -305,6 +303,7 @@ def get_stoppage_legend(
 
     return result
 
+#FETCH DATA FOR RCC OVERNIGHT RESETS API
 @app.get("/overnight_rcc_resets")
 async def get_overnight_rcc_resets(
     startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
@@ -409,7 +408,7 @@ async def get_overnight_rcc_resets(
 
     return {"overnightResetsDataSet": results}
 
-# Average RCC response time for faults
+#FETCH RESPONSE TIME DATA API
 @app.get("/get_rcc_response_time")
 def get_rcc_response_time(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
@@ -461,7 +460,7 @@ def get_rcc_response_time(
 
     return {"avg_response_hrs": result}
 
-#Offline Asset heading
+#FETCH OFFLINE DATA FOR HEADING API
 @app.get("/offline_headings")
 def get_stoppage_legend(
     db: pyodbc.Connection = Depends(get_db_access)
@@ -493,7 +492,7 @@ def get_stoppage_legend(
 
     return result
 
-# reading offline wtgs from microsoft access DB
+#FETCH OFFLINE WTG API
 @app.get("/offline_wtgs")
 def get_offline_wtgs(db: pyodbc.Connection = Depends(get_db_access)):
     cursor = db.cursor()
@@ -532,7 +531,7 @@ def get_offline_wtgs(db: pyodbc.Connection = Depends(get_db_access)):
 
     return {"offlineWtgsDataSet": data}
 
-#Service Details heading
+#FETCH SERVICES DATA FOR HEADING API
 @app.get("/services_details")
 def get_services_details(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
@@ -607,7 +606,7 @@ def get_services_details(
         "avg_down_time": avg_down_time
     }
 
-# reading service events from microsoft access DB
+#FETCH SERVICES API
 @app.get("/get_services")
 async def get_services(
     startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
@@ -663,7 +662,7 @@ async def get_services(
 
     return {"servicesDataSet": data}
 
-#Faults Details heading
+#FETCH FAULTS DATA FOR HEADING API
 @app.get("/faults_details")
 def get_faults_details(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
@@ -720,7 +719,7 @@ def get_faults_details(
 
     return result
 
-# reading fault events from microsoft access DB
+#FETCH FAULTS API
 @app.get("/get_faults")
 async def get_faults(
     startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
@@ -779,6 +778,7 @@ async def get_faults(
 
     return {"faultsDataSet": data}
 
+#FETCH IDF DATA FOR HEADINGS API
 @app.get("/idf_faults_heading")
 def get_idf_faults_heading(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
@@ -858,6 +858,7 @@ def get_idf_faults_heading(
 
     return result
 
+#FETCH IDF DATA API
 @app.get("/get_idf")
 async def get_idf(
     startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
@@ -926,7 +927,7 @@ async def get_idf(
 
 
 #----------------------------------------------Analysis Report ------------------------------------------------------------------
-# Power Production Analysis
+# POWER PRODUCTION ANALYSIS API
 @app.get("/get_production_analysis")
 async def get_production_analysis(
     startdate1: str = Query(...),
@@ -1008,7 +1009,7 @@ async def get_production_analysis(
 
     return {"productionAnalysisDataSet": result1 + result2}
 
-#Scheduled Service Analysis
+#SCHEDULED SERVICE ANALYSIS API
 @app.get("/get_schedule_service_analysis")
 def get_schedule_service_analysis(
     startdate1: str = Query(..., description="Start date for Period 1 (YYYY-MM-DD)"),
@@ -1113,7 +1114,7 @@ def get_schedule_service_analysis(
         "scheduledserviceAnalysisDataSet": results
     }
 
-#All Other Services
+#NON SCHEDULED SERVICE ANALYSIS API
 @app.get("/get_service_analysis")
 def get_service_analysis(
     startdate1: str = Query(..., description="Start date for Period 1 (YYYY-MM-DD)"),
@@ -1217,7 +1218,7 @@ def get_service_analysis(
         "serviceAnalysisDataSet": final_results
     }
 
-# Top 10 Faults Analysis
+#TOP 10 FAULT ANALYSIS API
 @app.get("/top_ten_faults")
 def get_top_ten_faults(
     startdate1: str = Query(..., description="Start date for Period 1 YYYY-MM-DD"),
@@ -1300,8 +1301,7 @@ def get_top_ten_faults(
         "period2": period2_results
     }
 
-
-#Wind Farm Reports and Event Log Data --------------------
+#GET PROD STATS FROM WIDN FARM API
 @app.get("/prod_stats_by_site")
 def get_prod_stats_by_site(
     facid: int = Query(..., description="Facility ID (e.g. 8 for SYHWF)"),
@@ -1341,7 +1341,7 @@ def get_prod_stats_by_site(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# reading offline wtgs for any wind farm
+#GET OFFLINE WTG FOR WIND FARM API
 @app.get("/offline_wtgs_for_wf")
 def get_offline_wtgs_for_wf(
     windfarm: str = Query(default=None, description="Filter by wind farm abbreviation"),
@@ -1393,7 +1393,7 @@ def get_offline_wtgs_for_wf(
 
     return {"offlineWtgsWFDataSet": data}
 
-# get stoppages for any wind farm
+#GET STOPPAGES FOR WIND FARM API
 @app.get("/get_stoppages_for_wf")
 async def get_services(
     startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
@@ -1464,7 +1464,7 @@ async def get_services(
 
     return {"stoppagesDataSet": data}
 
-#get idf for analysis
+#IDF ANALYSIS API
 @app.get("/get_idf_analysis")
 async def get_idf_analysis(
     startdate1: str = Query(..., description="Start date for Period 1 (YYYY-MM-DD)"),
