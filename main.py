@@ -1050,8 +1050,6 @@ def get_schedule_service_analysis(
             WHERE 
                 e.dtTS1DownBegin BETWEEN ? AND ?
                 AND r.rtnName = 'Schedule Service'
-                AND rr.rsnName <> 'Communication loss'
-                AND n.evntntNote <> 'DELETED'
             GROUP BY
                 f.facABBR, a.astDisplay, r.rtnName, rr.rsnName, e.dtTS1DownBegin
             ORDER BY 
