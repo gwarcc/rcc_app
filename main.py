@@ -125,7 +125,8 @@ def get_stoppage_legend(
             (tblEvent AS e
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
         WHERE 
-            e.dtTS1DownBegin BETWEEN ? AND ?
+            e.dtTS1DownBegin BETWEEN ? AND ? AND 
+            e.dtTS1DownBegin <> e.dtTS7DownFinish
         """,
         (start_dt, end_dt)
     )
@@ -268,7 +269,10 @@ def get_stoppage_legend(
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
             INNER JOIN tblReason AS rr ON e.rsnID = rr.rsnID)
         WHERE 
-            e.dtTS1DownBegin BETWEEN ? AND ?
+            e.dtTS1DownBegin BETWEEN ? AND ? AND
+            e.dtTS7DownFinish IS NOT NULL AND 
+            e.dtTS1DownBegin <> e.dtTS7DownFinish
+
         """,
         (start_dt, end_dt)
     )
@@ -499,7 +503,7 @@ def get_offline_wtgs(db: pyodbc.Connection = Depends(get_db_access)):
     cursor.execute(
         """
         SELECT 
-            e.dtTS1DownBegin, 
+            IIF(e.dtTS1DownBegin IS NOT NULL, e.dtTS1DownBegin, e.dtTS1EventBegin) AS EffectiveDownBegin,
             f.facABBR, 
             a.astDisplay, 
             r.rtnName, 
@@ -516,9 +520,10 @@ def get_offline_wtgs(db: pyodbc.Connection = Depends(get_db_access)):
         WHERE 
             e.dtTS7EventFinish IS NULL
         ORDER BY  
+            IIF(e.dtTS1DownBegin IS NOT NULL, e.dtTS1DownBegin, e.dtTS1EventBegin) DESC,
             f.facABBR ASC,
-            a.astDisplay ASC,
-            e.dtTS1DownBegin DESC;
+            a.astDisplay ASC;
+            
         """
         )  # Modify with your actual query
     rows = cursor.fetchall()
@@ -695,7 +700,8 @@ def get_faults_details(
             WHERE 
                 r.rtnName = 'Fault' AND
                 e.dtTS1DownBegin BETWEEN ? AND ? AND
-                e.dtTS7DownFinish IS NOT NULL
+                e.dtTS7DownFinish IS NOT NULL AND 
+                e.dtTS1DownBegin <> e.dtTS7DownFinish
             """,
         (start_dt, end_dt)
     )
@@ -760,7 +766,8 @@ async def get_faults(
         WHERE 
             e.fltID IS NOT NULL AND
             e.dtTS1DownBegin BETWEEN ? AND ? AND
-            e.dtTS7DownFinish IS NOT NULL
+            e.dtTS7DownFinish IS NOT NULL AND 
+            e.dtTS1DownBegin <> e.dtTS7DownFinish
         ORDER BY 
             f.facABBR ASC,
             a.astDisplay ASC,
