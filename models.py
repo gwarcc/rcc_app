@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, TIMESTAMP, Boolean, Text
 from .database import Base
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from pydantic import BaseModel
@@ -13,6 +14,7 @@ class User(Base):
     usrnamedisplay = Column(String)
     password = Column(String)  # Renamed from 'pass'
     usremail = Column(String, unique=True, index=True)
+    usrrlid = Column(Integer, default="3")  # User Roles for Access Control
 
 class LoginAttempt(Base):
     __tablename__ = 'tblloginattempts'

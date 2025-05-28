@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Request, APIRouter, Query
+from fastapi import FastAPI, HTTPException, Depends, Request, APIRouter, Query, Response, Cookie
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from rcc_app import models, schemas, crud
@@ -9,15 +9,26 @@ import pyodbc
 import socket
 import sys
 import os
+from fastapi.security import OAuth2PasswordBearer
+from fastapi import Security
+from fastapi import status
+from jose import JWTError
 from openpyxl import load_workbook
 from typing import List, Generator
 from collections import defaultdict
+from jose import jwt
+from passlib.context import CryptContext
+from .auth_utils import (
+    create_access_token, create_refresh_token, verify_password, decode_token
+)
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")  # tokenUrl is your login endpoint
 
 
 # Enable CORS
@@ -29,14 +40,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# AUTHENTICATION AND AUTHORIZATION FUNCTION ----------------------------------------------------------------------------------------
 # LOGIN API
 @app.post("/login/")
-def login(login_data: schemas.Login, request: Request, db: Session = Depends(get_db)):
+def login(login_data: schemas.Login, request: Request, response: Response, db: Session = Depends(get_db)):
+
     # Get the IP address of the client
     client_ip = request.client.host
 
     # Query user by email
     user = db.query(models.User).filter(models.User.usremail == login_data.email).first()
+
     # Handle case where the user does not exist
     if not user:
         # Log the failed login attempt
@@ -50,22 +65,21 @@ def login(login_data: schemas.Login, request: Request, db: Session = Depends(get
         db.add(log_attempt)
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    # Validate the password
-    if user.__getattribute__("password") != login_data.password:  # Use __getattribute__ to access the field
-        # Log the failed login attempt
+    
+    # Validate the password New
+    if not verify_password(login_data.password, user.password):
         log_attempt = models.LoginAttempt(
-            usrid=user.usrid,
-            ipaddr=client_ip,
-            attemptat=datetime.now(),
-            success=False,
+            usrid=user.usrid, 
+            ipaddr=client_ip, 
+            attemptat=datetime.now(), 
+            success=False, 
             reason="Invalid password"
         )
         db.add(log_attempt)
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    # Log the successful login attempt
+    # Log the successful login attempt new
     log_attempt = models.LoginAttempt(
         usrid=user.usrid,
         ipaddr=client_ip,
@@ -76,7 +90,113 @@ def login(login_data: schemas.Login, request: Request, db: Session = Depends(get
     db.add(log_attempt)
     db.commit()
 
-    return {"message": "Login successful", "user": {"id": user.usrid, "name": user.usrnamedisplay}}
+    access_token = create_access_token({"sub": user.usremail, "role": user.usrrlid})
+    refresh_token = create_refresh_token({"sub": user.usremail})
+
+
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        max_age=7 * 24 * 60 * 60,
+        path="/refresh"
+    )
+
+    return {
+        "message": "Login successful",
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.usrid,
+            "name": user.usrnamedisplay,
+            "role": user.usrrlid
+        }
+    }
+
+# REFRESH TOKEN API
+@app.post("/refresh")
+def refresh_token(response: Response, refresh_token: str | None = Cookie(default=None)):
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Missing refresh token")
+
+    payload = decode_token(refresh_token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    access_token = create_access_token({"sub": payload["sub"], "role": payload.get("role", "user")})
+    new_refresh_token = create_refresh_token({"sub": payload["sub"]})
+
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        max_age=7 * 24 * 60 * 60,
+        path="/refresh"
+    )
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# LOGOUT API
+@app.post("/logout")
+def logout(response: Response):
+    response.delete_cookie(key="refresh_token", path="/refresh")
+    return {"message": "Logged out"}
+
+
+def get_current_user(token: str = Security(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = decode_token(token)  # your existing decode_token() helper
+        if payload is None:
+            raise credentials_exception
+        
+        user_email = payload.get("sub")
+        if user_email is None:
+            raise credentials_exception
+        
+        user = db.query(models.User).filter(models.User.usremail == user_email).first()
+        if user is None:
+            raise credentials_exception
+        
+        return user
+    except JWTError:
+        raise credentials_exception
+
+
+@app.get("/me")
+def read_current_user(current_user: models.User = Depends(get_current_user)):
+    return {
+        "id": current_user.usrid,
+        "name": current_user.usrnamedisplay,
+        "role": current_user.usrrlid
+    }
+
+
+
+# old fetch current user 
+# def get_current_user(user_id: int = Query(...), db: Session = Depends(get_db)):
+#     # get user information
+#     user = db.query(models.User).filter(models.User.usrid == user_id).first()
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#     return user
+
+# fetch user role
+def role_required(allowed_roles: List[str]):
+    #check the user role and permission
+    def wrapper(user: models.User = Depends(get_current_user)):
+        if user.role not in allowed_roles:
+            raise HTTPException(status_code=403, detail="Access denied")
+        return user
+    return wrapper
 
 # FETCH USER ACCOUNT API
 @app.get("/user/{user_id}")
@@ -188,7 +308,8 @@ def get_summary_stoppages(
             INNER JOIN tblFacility AS f ON e.facID = f.facID)
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
         WHERE       
-            e.dtTS1DownBegin BETWEEN ? AND ?
+            e.dtTS1DownBegin BETWEEN ? AND ? AND 
+            e.dtTS1DownBegin <> e.dtTS7DownFinish
     """, (start_dt, end_dt))
 
     rows = cursor.fetchall()
