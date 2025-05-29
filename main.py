@@ -180,15 +180,6 @@ def read_current_user(current_user: models.User = Depends(get_current_user)):
     }
 
 
-
-# old fetch current user 
-# def get_current_user(user_id: int = Query(...), db: Session = Depends(get_db)):
-#     # get user information
-#     user = db.query(models.User).filter(models.User.usrid == user_id).first()
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-#     return user
-
 # fetch user role
 def role_required(allowed_roles: List[str]):
     #check the user role and permission
@@ -245,8 +236,7 @@ def get_stoppage_legend(
             (tblEvent AS e
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
         WHERE 
-            e.dtTS1DownBegin BETWEEN ? AND ? AND 
-            e.dtTS1DownBegin <> e.dtTS7DownFinish
+            e.dtTS1DownBegin BETWEEN ? AND ? 
         """,
         (start_dt, end_dt)
     )
@@ -286,9 +276,22 @@ def get_stoppage_legend(
 def get_summary_stoppages(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
     enddate: str = Query(..., description="End date in YYYY-MM-DD"),
-    db: pyodbc.Connection = Depends(get_db_access)
+    db: pyodbc.Connection = Depends(get_db_access),
+    db_prod: pyodbc.Connection = Depends(get_db_prod_stats)
 ):
     cursor = db.cursor()
+
+    facid_map = {
+    "AGWF": 1,
+    "BIWF": 2,
+    "ESWF": 3,
+    "CHWF": 4,
+    "GRWF": 5,
+    "MWF": 6,
+    "MLWF": 7,
+    "SYHWF": 8,
+    "WRWF": 9,
+}
 
     try:
         start_dt = datetime.strptime(startdate, "%Y-%m-%d")
@@ -308,8 +311,7 @@ def get_summary_stoppages(
             INNER JOIN tblFacility AS f ON e.facID = f.facID)
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
         WHERE       
-            e.dtTS1DownBegin BETWEEN ? AND ? AND 
-            e.dtTS1DownBegin <> e.dtTS7DownFinish
+            e.dtTS1DownBegin BETWEEN ? AND ? 
     """, (start_dt, end_dt))
 
     rows = cursor.fetchall()
@@ -346,6 +348,19 @@ def get_summary_stoppages(
         "avg_hours": []
     }
 
+    def get_avg_wind_speed(facid: int):
+        try:
+            cursor_prod = db_prod.cursor()
+            cursor_prod.execute("""
+                SELECT AVG(spAvgWS)
+                FROM tblStatsProd
+                WHERE facID = ? AND spDate BETWEEN ? AND ?
+            """, (facid, start_dt, end_dt))
+            row = cursor_prod.fetchone()
+            return round(row[0], 2) if row and row[0] is not None else None
+        except:
+            return None
+
     for wf, types in summary.items():
         for typ, count in types.items():
             result["stoppages"].append({
@@ -357,10 +372,13 @@ def get_summary_stoppages(
     for wf in summary.keys():
         avg_down = round(sum(downtime_data[wf]) / len(downtime_data[wf]), 2) if downtime_data[wf] else 0
         avg_service = round(sum(service_data[wf]) / len(service_data[wf]), 2) if service_data[wf] else 0
+        facid = facid_map.get(wf)
+        avg_wind = get_avg_wind_speed(facid) if facid else None
         result["avg_hours"].append({
             "windfarm": wf,
             "avg_downtime_hrs": avg_down,
-            "avg_service_hrs": avg_service
+            "avg_service_hrs": avg_service,
+            "avg_wind_speed": avg_wind
         })
 
     return result
@@ -390,9 +408,7 @@ def get_stoppage_legend(
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
             INNER JOIN tblReason AS rr ON e.rsnID = rr.rsnID)
         WHERE 
-            e.dtTS1DownBegin BETWEEN ? AND ? AND
-            e.dtTS7DownFinish IS NOT NULL AND 
-            e.dtTS1DownBegin <> e.dtTS7DownFinish
+            e.dtTS1DownBegin BETWEEN ? AND ? 
 
         """,
         (start_dt, end_dt)
