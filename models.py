@@ -14,8 +14,17 @@ class User(Base):
     usrnamedisplay = Column(String)
     password = Column(String)  # Renamed from 'pass'
     usremail = Column(String, unique=True, index=True)
-    usrrlid = Column(Integer, default="3")  # User Roles for Access Control
+    usrrlid = Column(Integer, ForeignKey("tblusersrole.usrrlid"), default="3")  # User Roles for Access Control
+    role = relationship("UserRole")
 
+class UserRole(Base):
+    __tablename__ = "tblusersrole"
+
+    usrrlid = Column(Integer, primary_key=True, index=True)
+    usrrlname = Column(String, index=True)
+    usrrlvieworder = Column(Integer, index=True)
+    rltypid = Column(Integer, index=True)
+    
 class LoginAttempt(Base):
     __tablename__ = 'tblloginattempts'
 

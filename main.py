@@ -19,7 +19,7 @@ from collections import defaultdict
 from jose import jwt
 from passlib.context import CryptContext
 from .auth_utils import (
-    create_access_token, create_refresh_token, verify_password, decode_token
+    create_access_token, create_refresh_token, verify_password, decode_token, require_role, get_current_user
 )
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -90,7 +90,12 @@ def login(login_data: schemas.Login, request: Request, response: Response, db: S
     db.add(log_attempt)
     db.commit()
 
-    access_token = create_access_token({"sub": user.usremail, "role": user.usrrlid})
+    access_token = create_access_token({
+        "sub": user.usremail,
+        "usrid": user.usrid,
+        "usrnamedisplay": user.usrnamedisplay,
+        "usrrolename": user.role.usrrlname  # Include role name string here
+    })
     refresh_token = create_refresh_token({"sub": user.usremail})
 
 
@@ -206,6 +211,7 @@ def get_user_info(user_id: int, db: Session = Depends(get_db)):
 #FETCH STOPPAGE SUMMARY DATA FOR HEADING API
 @app.get("/stoppage_headings")
 def get_stoppage_legend(
+    # user=Depends(require_role(["Admin"])),
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
     enddate: str = Query(..., description="End date in YYYY-MM-DD"),
     db: pyodbc.Connection = Depends(get_db_access)
@@ -271,27 +277,13 @@ def get_stoppage_legend(
 
     return result
 
-#FETCH STOPPAGE SUMMARY DATA API
 @app.get("/summary_stoppages")
 def get_summary_stoppages(
     startdate: str = Query(..., description="Start date in YYYY-MM-DD"),
     enddate: str = Query(..., description="End date in YYYY-MM-DD"),
-    db: pyodbc.Connection = Depends(get_db_access),
-    db_prod: pyodbc.Connection = Depends(get_db_prod_stats)
+    db: pyodbc.Connection = Depends(get_db_access)
 ):
     cursor = db.cursor()
-
-    facid_map = {
-    "AGWF": 1,
-    "BIWF": 2,
-    "ESWF": 3,
-    "CHWF": 4,
-    "GRWF": 5,
-    "MWF": 6,
-    "MLWF": 7,
-    "SYHWF": 8,
-    "WRWF": 9,
-}
 
     try:
         start_dt = datetime.strptime(startdate, "%Y-%m-%d")
@@ -305,7 +297,9 @@ def get_summary_stoppages(
             r.rtnName AS category,
             e.dtTS1DownBegin AS stop_time,
             e.dtTS3MaintBegin AS maint_time,
-            e.dtTS7EventFinish AS start_time
+            e.dtTS7EventFinish AS start_time,
+            e.evntWindSpeed,
+            e.rstbyID
         FROM 
             ((tblEvent AS e
             INNER JOIN tblFacility AS f ON e.facID = f.facID)
@@ -319,6 +313,7 @@ def get_summary_stoppages(
     summary = defaultdict(lambda: defaultdict(int))
     downtime_data = defaultdict(list)
     service_data = defaultdict(list)
+    wind_speed_data = defaultdict(list)  # 新增
 
     for row in rows:
         wf = row.windfarm
@@ -330,7 +325,10 @@ def get_summary_stoppages(
         if cat == "schedule service":
             summary[wf]["Scheduled Services"] += 1
         elif cat in ["fault", "idf fault"]:
-            summary[wf]["Faults"] += 1
+            if row.rstbyID == 2:
+                summary[wf]["Faults Reset by RCC"] += 1
+            else:
+                summary[wf]["Faults Not Reset by RCC"] += 1
         else:
             summary[wf]["Non Scheduled Services"] += 1
 
@@ -343,23 +341,13 @@ def get_summary_stoppages(
                 mt = (row.start_time - row.maint_time).total_seconds() / 3600
                 service_data[wf].append(mt)
 
+        if row.evntWindSpeed is not None:
+            wind_speed_data[wf].append(row.evntWindSpeed)
+
     result = {
         "stoppages": [],
         "avg_hours": []
     }
-
-    def get_avg_wind_speed(facid: int):
-        try:
-            cursor_prod = db_prod.cursor()
-            cursor_prod.execute("""
-                SELECT AVG(spAvgWS)
-                FROM tblStatsProd
-                WHERE facID = ? AND spDate BETWEEN ? AND ?
-            """, (facid, start_dt, end_dt))
-            row = cursor_prod.fetchone()
-            return round(row[0], 2) if row and row[0] is not None else None
-        except:
-            return None
 
     for wf, types in summary.items():
         for typ, count in types.items():
@@ -372,8 +360,8 @@ def get_summary_stoppages(
     for wf in summary.keys():
         avg_down = round(sum(downtime_data[wf]) / len(downtime_data[wf]), 2) if downtime_data[wf] else 0
         avg_service = round(sum(service_data[wf]) / len(service_data[wf]), 2) if service_data[wf] else 0
-        facid = facid_map.get(wf)
-        avg_wind = get_avg_wind_speed(facid) if facid else None
+        avg_wind = round(sum(wind_speed_data[wf]) / len(wind_speed_data[wf]), 2) if wind_speed_data[wf] else None
+
         result["avg_hours"].append({
             "windfarm": wf,
             "avg_downtime_hrs": avg_down,
@@ -382,6 +370,7 @@ def get_summary_stoppages(
         })
 
     return result
+
 
 #FETCH STOPPAGE SUMMARY FOR LEGEND SECTION API
 @app.get("/stoppage_legend")
