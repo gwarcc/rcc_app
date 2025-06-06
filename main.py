@@ -320,11 +320,11 @@ def get_summary_stoppages(
         cat = row.category.strip().lower() if row.category else ""
         summary[wf]["Total Stops"] += 1
 
-        is_fault = cat in ["fault", "idf fault", "idf outage", "schedule outage"]
+        is_fault = cat in ["fault", "idf fault", "idf outage", "schedule outage", "communication"]
 
         if cat == "schedule service":
             summary[wf]["Scheduled Services"] += 1
-        elif cat in ["fault", "idf fault"]:
+        elif cat in ["fault", "idf fault", "communication"]:
             if row.rstbyID == 2:
                 summary[wf]["Faults Reset by RCC"] += 1
             else:
@@ -412,7 +412,7 @@ def get_stoppage_legend(
 
         if cat == "schedule service":
             typ = "Scheduled Services"
-        elif cat in ["fault", "idf fault"]:
+        elif cat in ["fault", "idf fault", "communication"]:
             typ = "Faults"
         else:
             typ = "Non Scheduled Services"
