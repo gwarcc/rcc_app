@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Request, APIRouter, Query, Response, Cookie
+from fastapi import FastAPI, HTTPException, Depends, Request, APIRouter, Query, Response, Cookie, Body
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from rcc_app import models, schemas, crud
@@ -34,7 +34,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")  # tokenUrl is your login
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["http://localhost:4200"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -122,7 +122,7 @@ def login(login_data: schemas.Login, request: Request, response: Response, db: S
 
 # REFRESH TOKEN API
 @app.post("/refresh")
-def refresh_token(response: Response, refresh_token: str | None = Cookie(default=None)):
+def refresh_token(response: Response, refresh_token: str = Body(...)):
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Missing refresh token")
 
@@ -159,7 +159,7 @@ def get_current_user(token: str = Security(oauth2_scheme), db: Session = Depends
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = decode_token(token)  # your existing decode_token() helper
+        payload = decode_token(token) 
         if payload is None:
             raise credentials_exception
         
@@ -680,24 +680,24 @@ def get_services_details(
     cursor.execute(
         """
         SELECT 
-            COUNT(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage'), 1, NULL)) AS total_services,
+            COUNT(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage', 'Communication'), 1, NULL)) AS total_services,
 
             COUNT(IIf(r.rtnName IN ('Schedule Service', 'Scheduled - Adhoc', 'Scheduled Inspections', 'Scheduled Outage'), 1, NULL)) AS scheduled_services,
 
             COUNT(IIf(
                 r.rtnName NOT IN (
                     'Fault', 'IDF Fault', 'IDF Outage', 
-                    'Schedule Service', 'Scheduled - Adhoc', 'Scheduled Inspections', 'Scheduled Outage'
+                    'Schedule Service', 'Scheduled - Adhoc', 'Scheduled Inspections', 'Scheduled Outage', 'Communication'
                 ), 1, NULL)) AS non_scheduled_services,
 
             ROUND(
-                SUM(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS3MaintBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL,
+                SUM(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage', 'Communication') AND e.dtTS3MaintBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL,
                     DateDiff('s', e.dtTS3MaintBegin, e.dtTS7DownFinish), 0)) / 
                 COUNT(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS3MaintBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL, 1, NULL)) / 3600.0
             , 2) AS avg_maint,
 
             ROUND(
-                SUM(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS1DownBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL,
+                SUM(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage', 'Communication') AND e.dtTS1DownBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL,
                     DateDiff('s', e.dtTS1DownBegin, e.dtTS7DownFinish), 0)) / 
                 COUNT(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS1DownBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL, 1, NULL)) / 3600.0
             , 2) AS avg_down_time
