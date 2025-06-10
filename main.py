@@ -777,8 +777,8 @@ async def get_services(
                 n.evntntNote IS NULL OR n.evntntNote <> 'DELETED'
                 )
         ORDER BY 
-            f.facABBR ASC,
             e.dtTS1DownBegin DESC,
+            f.facABBR ASC,
             a.astDisplay DESC;
         """,
         (start_dt, end_dt)
@@ -895,6 +895,7 @@ async def get_faults(
             e.dtTS7DownFinish IS NOT NULL AND 
             e.dtTS1DownBegin <> e.dtTS7DownFinish
         ORDER BY 
+            ROUND((IIF(e.dtTS7EventFinish IS NOT NULL, e.dtTS7EventFinish, Now()) - e.dtTS1DownBegin) * 24, 2) DESC,
             f.facABBR ASC,
             a.astDisplay ASC,
             e.dtTS1DownBegin DESC;
