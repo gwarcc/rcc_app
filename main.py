@@ -881,12 +881,12 @@ async def get_faults(
             INNER JOIN tblAsset AS a ON e.astID = a.astID)
             INNER JOIN tblRationale AS r ON e.rtnID = r.rtnID)
             INNER JOIN tblReason AS rr ON e.rsnID = rr.rsnID)
-            INNER JOIN tblFaultCode AS fa ON e.fltID = fa.fltID)
+            LEFT JOIN tblFaultCode AS fa ON e.fltID = fa.fltID)
             LEFT JOIN tblRCCResetType AS rrt ON e.rsttypID = rrt.rsttypID)
             LEFT JOIN tblRCCResetBy AS rrb ON e.rstbyID = rrb.rstbyID)
             LEFT JOIN tblEventNotes AS n ON e.evntID = n.evntID
         WHERE 
-            e.fltID IS NOT NULL AND
+            r.rtnName = 'Fault' AND
             e.dtTS1DownBegin BETWEEN ? AND ? AND
             e.dtTS7DownFinish IS NOT NULL AND 
             e.dtTS1DownBegin <> e.dtTS7DownFinish
