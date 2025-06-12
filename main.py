@@ -701,13 +701,9 @@ def get_services_details(
                     DateDiff('s', e.dtTS1DownBegin, e.dtTS7DownFinish), 0)) / 
                 COUNT(IIf(r.rtnName NOT IN ('Fault', 'IDF Fault', 'IDF Outage') AND e.dtTS1DownBegin IS NOT NULL AND e.dtTS7DownFinish IS NOT NULL, 1, NULL)) / 3600.0
             , 2) AS avg_down_time
-            
-            
-
         FROM 
             tblEvent AS e
             LEFT JOIN tblRationale AS r ON e.rtnID = r.rtnID
-
         WHERE 
             e.dtTS1DownBegin BETWEEN ? AND ?
         """,
@@ -777,8 +773,8 @@ async def get_services(
                 n.evntntNote IS NULL OR n.evntntNote <> 'DELETED'
                 )
         ORDER BY 
-            e.dtTS1DownBegin DESC,
             f.facABBR ASC,
+            e.dtTS1DownBegin DESC,
             a.astDisplay DESC;
         """,
         (start_dt, end_dt)
