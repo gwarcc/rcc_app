@@ -151,7 +151,6 @@ def logout(response: Response):
     response.delete_cookie(key="refresh_token", path="/refresh")
     return {"message": "Logged out"}
 
-
 def get_current_user(token: str = Security(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -175,7 +174,6 @@ def get_current_user(token: str = Security(oauth2_scheme), db: Session = Depends
     except JWTError:
         raise credentials_exception
 
-
 @app.get("/me")
 def read_current_user(current_user: models.User = Depends(get_current_user)):
     return {
@@ -183,7 +181,6 @@ def read_current_user(current_user: models.User = Depends(get_current_user)):
         "name": current_user.usrnamedisplay,
         "role": current_user.usrrlid
     }
-
 
 # fetch user role
 def role_required(allowed_roles: List[str]):
@@ -370,7 +367,6 @@ def get_summary_stoppages(
         })
 
     return result
-
 
 #FETCH STOPPAGE SUMMARY FOR LEGEND SECTION API
 @app.get("/stoppage_legend")
