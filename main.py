@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from rcc_app import models, schemas, crud
 from collections import defaultdict
-from .database import engine, Base, get_db, get_db_access, get_db_prod_stats
+from .database import engine, Base, get_db, get_db_access, get_db_prod_stats, get_db_fems
 from datetime import datetime,timedelta,time 
 import pyodbc
 import socket
@@ -1052,7 +1052,143 @@ async def get_idf(
     return {"idfDataSet": data}
 
 
-#----------------------------------------------Analysis Report ------------------------------------------------------------------
+
+#----------------------------------------------FEMS Timesheet------------------------------------------------------------------
+# @app.get("/get_timesheet_pie_chart")
+# async def get_timesheet_pie_chart(
+#     startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
+#     enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
+#     db: pyodbc.Connection = Depends(get_db_fems)):
+    
+#     cursor = db.cursor()
+#     try:
+#         # Parse date strings to datetime objects
+#         start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+#         end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+#     except ValueError:
+#         return {"error": "Invalid date format. Use YYYY-MM-DD"}
+    
+#     # Adjust the query to match the fields and logic of your FEMS Timesheet database
+#     cursor.execute(
+#         """
+#         SELECT
+#             service_center,
+#             name,
+#             worktype,
+#             work_order_type,
+#             start_time,
+#             end_time
+#         FROM 
+#             tbl_timesheet
+#         WHERE 
+#             start_time BETWEEN ? AND ?
+#         ORDER BY 
+#             service_center ASC,
+#             start_time DESC;
+#         """, 
+#         (start_dt, end_dt)
+#     )
+    
+#     rows = cursor.fetchall()
+    
+#     # Extract column names dynamically
+#     columns = [column[0] for column in cursor.description]
+    
+#     # Map rows to dictionaries with column names as keys
+#     data = [dict(zip(columns, row)) for row in rows]
+    
+#     return {"timesheetData": data}
+
+@app.get("/get_tidy_timesheet_pie_chart")
+async def get_tidy_timesheet_pie_chart(
+    startdate: str = Query(..., description="Start date in format YYYY-MM-DD"),
+    enddate: str = Query(..., description="End date in format YYYY-MM-DD"),
+    db: pyodbc.Connection = Depends(get_db_fems)):
+    
+    cursor = db.cursor()
+    try:
+        # Parse date strings to datetime objects
+        start_dt = datetime.strptime(startdate, "%Y-%m-%d")
+        end_dt = datetime.strptime(enddate, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+    
+    # Query timesheet data
+    cursor.execute(
+        """
+        SELECT
+            service_center,
+            name,
+            worktype,
+            work_order_type,
+            start_time,
+            end_time
+        FROM 
+            tbl_timesheet
+        WHERE 
+            start_time BETWEEN ? AND ?
+        ORDER BY 
+            service_center ASC,
+            start_time DESC;
+        """, 
+        (start_dt, end_dt)
+    )
+    
+    rows = cursor.fetchall()
+    
+    # Extract column names dynamically
+    columns = [column[0] for column in cursor.description]
+    
+    # Map rows to dictionaries
+    data = [dict(zip(columns, row)) for row in rows]
+    
+    # Aggregate data for pie chart
+    from collections import defaultdict
+    
+    def calculate_duration_hours(start, end):
+        delta = end - start
+        return delta.total_seconds() / 3600
+
+    result = defaultdict(lambda: defaultdict(lambda: {"duration_hours": 0.0, "is_non_order": False}))
+
+    for entry in data:
+        service_center = entry["service_center"]
+        category = entry["worktype"] if entry["worktype"] != "0" else entry["work_order_type"]
+        is_non_order = category.startswith("0")
+        start_time = entry["start_time"]
+        end_time = entry["end_time"]
+        
+        # Some Access databases return datetime.datetime, while others return strings — handle both cases for compatibility:
+        if isinstance(start_time, str):
+            start_time = datetime.fromisoformat(start_time)
+        if isinstance(end_time, str):
+            end_time = datetime.fromisoformat(end_time)
+        
+        duration = calculate_duration_hours(start_time, end_time)
+        
+        result[service_center][category]["duration_hours"] += duration
+        result[service_center][category]["is_non_order"] = is_non_order  # store flag
+    
+    # Format result for frontend
+    charts = []
+    for sc, cat_map in result.items():
+        charts.append({
+            "service_center": sc,
+            "data": [
+                {
+                    "category": cat,
+                    "duration_hours": round(values["duration_hours"], 2),
+                    "is_non_order": values["is_non_order"]
+                }
+                for cat, values in cat_map.items()
+            ]
+        })
+    
+    return {"charts": charts}
+
+
+
+#----------------------------------------------Analysis Report------------------------------------------------------------------
 # POWER PRODUCTION ANALYSIS API
 @app.get("/get_production_analysis")
 async def get_production_analysis(
